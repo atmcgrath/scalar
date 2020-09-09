@@ -4020,6 +4020,8 @@ window.scalarvis = { instanceCount: -1 };
 
     	  if (!content) return [];
     	  content = content.replace(/(<([^>]+)>)/ig," ");  // Strip tags
+    	  content = content.replace(/&nbsp;/g,' ');  // Non-breaking space to space
+    	  content = $('<textarea />').html(content).text();  // HTML entity decode
     	  var words = content.split(' ');
     	  return words;
 

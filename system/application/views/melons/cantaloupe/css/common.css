@@ -1106,7 +1106,7 @@ a.nav_btn:hover {
 .texteo_icon       { background-repeat:no-repeat; background-size: 15px 15px; padding-left:20px; background-position:2px 2px; }
 .texteo_icon_audio { background-image:url(images/audio@2x.png); }
 .texteo_icon_video { background-image:url(images/video@2x.png); }
-.texteo_icon_image, .texteo_icon_tiledImage { background-image:url(images/image@2x.png); }
+.texteo_icon_image, .texteo_icon_tiledImage, .texteo_icon_manifest { background-image:url(images/image@2x.png); }
 .texteo_icon_note { background-image:url(images/note@2x.png); }
 .texteo_icon_map { background-image:url(images/map@2x.png); background-size: 8px 15px !important; padding-left: 13px !important; }
 .texteo_icon_timeline { background-image:url(images/timeline@2x.png); }
@@ -1117,10 +1117,10 @@ a.nav_btn:hover {
 .texteo_icon_document { background-image:url(images/document@2x.png); }
 
 /* TODO */
-.path_icon { width:22px; height:22px; background-size: contain; background-image:url(../images/menu_path_icon.png); display:inline-block; background-position:left top;}
-.reply_icon { width:22px; height:22px; background-size: contain; background-image:url(../images/menu_comment_icon.png); display:inline-block; background-position:left top;}
-.annotation_icon { width:22px; height:22px; background-size: contain; background-image:url(../images/menu_annotation_icon.png); display:inline-block; background-position:left top;}
-.tag_icon { width:22px; height:22px; background-size: contain; background-image:url(../images/menu_tag_icon.png); display:inline-block; background-position:left top;}
+.path_icon { width:14px; height:14px; margin-right: 5px; background-size: contain; background-image:url(../images/icon_path_dark.png); display:inline-block; background-position:left top;}
+.reply_icon { width:14px; height:14px; margin-right: 5px; background-size: contain; background-image:url(../images/icon_comment_dark.png); display:inline-block; background-position:left top;}
+.annotation_icon { width:14px; height:14px; margin-right: 5px; background-size: contain; background-image:url(../images/icon_annotation_dark.png); display:inline-block; background-position:left top;}
+.tag_icon { width:14px; height:14px; margin-right: 5px; background-size: contain; background-image:url(../images/icon_tag_dark.png); display:inline-block; background-position:left top;}
 
 /* loading */
 .loading { background: #fff; position:absolute; top:0; left:0; }

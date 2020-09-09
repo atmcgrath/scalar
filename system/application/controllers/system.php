@@ -135,7 +135,7 @@ class System extends MY_Controller {
 			$this->load->model('version_model', 'versions');
 			$this->data['book'] = $this->books->get($book_id);
 			if (empty($this->data['book'])) die ('{"error":"Could not find a book associated with the JSON payload"}');
-			$this->data['content'] = $this->lenses->get_all($book_id);
+			$this->data['content'] = $this->lenses->get_all_json($book_id);
 		} else {
 			$request_body = file_get_contents('php://input');
 			if (!empty($request_body)) {  // Get nodes described by a JSON payload
@@ -194,6 +194,18 @@ class System extends MY_Controller {
 		$this->template->write_view('content', 'modules/login/login_box', $this->data);
 		$this->template->render();
 
+	}
+	
+	public function authenticator() {
+
+		$this->data['login'] = $this->login->get();
+		$this->data['title'] = $this->lang->line('install_name').': Login';
+		$this->data['norobots'] = true;
+		
+		$this->template->set_template('admin');
+		$this->template->write_view('content', 'modules/login/authenticator_box', $this->data);
+		$this->template->render();
+		
 	}
 
 	public function logout() {
@@ -412,6 +424,15 @@ class System extends MY_Controller {
 		 					header('Location: '.$this->base_url.'?book_id='.$book_id.'&zone='.$this->data['zone'].'&error=password_match');
 		 					exit;
 		 				}
+		 				$strong_password_enabled = $this->config->item('strong_password');
+		 				if ($strong_password_enabled && !$this->users->test_strong_password($array['password'], $array['fullname'], $array['email'])) {
+		 					header('Location: '.$this->base_url.'?book_id='.$book_id.'&zone='.$this->data['zone'].'&error=strong_password');
+		 					exit;
+		 				}
+		 				if ($strong_password_enabled && !$this->users->test_previous_password($array['password'], $array['email'])) {
+		 					header('Location: '.$this->base_url.'?book_id='.$book_id.'&zone='.$this->data['zone'].'&error=previous_password');
+		 					exit;
+		 				}
 		 				$this->users->set_password($this->data['login']->user_id, $array['password']);
 		 			}
 					// Save profile
@@ -427,6 +448,17 @@ class System extends MY_Controller {
 		 			$bool = (isset($_POST['enable']) && $_POST['enable']) ? true : false;
 		 			$this->books->enable_editorial_workflow($_POST['book_id'],$bool);
 		 			header('Location: '.$this->base_url.'?book_id='.$book_id.'&zone=editorial#tabs-editorial');
+		 			exit;
+		 		case 'enable_google_authenticator':
+		 			$enable = (isset($_POST['enable_google_authenticator']) && '1'==$_POST['enable_google_authenticator']) ? true : false;
+		 			$user_id = (int) $this->data['login']->user_id;
+		 			$this->load->model('resource_model', 'resources');
+		 			$json = $this->resources->get('google_authenticator');
+		 			$arr = json_decode($json, true);
+		 			$arr[$user_id] = $enable;
+		 			$json = json_encode($arr);
+		 			$this->resources->put('google_authenticator', $json);
+		 			header('Location: '.$this->base_url.'?book_id='.$book_id.'&zone='.((isset($_POST['zone']))?$_POST['zone']:'').'&pill='.((isset($_POST['pill']))?$_POST['pill']:'').'#tabs-'.((isset($_POST['zone']))?$_POST['zone']:''));
 		 			exit;
 		 		case 'do_save_sharing':
 		 			$this->books->save(array('title'=>$_POST['title'],'book_id'=>(int)$_POST['book_id']));
@@ -508,7 +540,7 @@ class System extends MY_Controller {
 						unset($array['password_2']);
 						$user_id = (int) $this->users->add($array);
 					} catch (Exception $e) {
-						$get .= 'error=3';
+						$get .= 'error='.urlencode($e->getMessage());
 						if (isset($_REQUEST['hash'])) $get .= $_REQUEST['hash'];
 						header('Location: '.$this->base_url.$get);
 						exit;
@@ -671,8 +703,30 @@ class System extends MY_Controller {
 		    	$this->data['editorial_is_on'] = $this->editorial_is_on();
 		    	break;
 		    case 'publish':
-			    // Do Nothing.  Nothing needs to be done.
+			    // Do Nothing.
 		    	break;
+		    case 'tools':
+		    case 'utils':
+		    	$this->data['super_admins'] = $this->users->get_super_admins();
+		    	$google_authenticator_salt = $this->config->item('google_authenticator_salt');
+		    	if (!empty($google_authenticator_salt) && $this->data['login']->is_super) {  // Only super admins
+		    		$this->load->model('resource_model', 'resources');
+		    		$json = $this->resources->get('google_authenticator');
+		    		$arr = json_decode($json, true);
+		    		$user_id = (int) $this->data['login']->user_id;
+		    		$this->data['google_authenticator_is_enabled'] = (isset($arr[$user_id]) && $arr[$user_id]) ? true : false;
+		    		foreach ($this->data['super_admins'] as $key => $value) {
+		    			if (isset($arr[$value->user_id]) && $arr[$value->user_id]) {
+		    				$this->data['super_admins'][$key]->google_authenticator_is_enabled = true;
+		    			}
+		    		}
+		    		include_once APPPATH.'/libraries/GoogleAuthenticator/vendor/autoload.php';
+		    		$g = new \Google\Authenticator\GoogleAuthenticator();
+		    		$username = $this->data['login']->email;
+		    		$parse = parse_url(base_url());
+		    		$domain = $parse['host'];
+		    		$this->data['qr_image'] = '<img style="max-width:none;max-height:none;" src="'.$g->getURL($username, $domain, $google_authenticator_salt).'" />';
+		    	}
 		    // Page-types follow, purposely at the bottom of the switch so that they fall into 'default'
 		    default:
 		    	$this->data['can_editorial'] = $this->can_editorial();

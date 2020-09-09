@@ -591,6 +591,20 @@ function ScalarAPI() {
 				'Android': {extensions:prismSrcExt, format:'PlainText', player:'native', specifiesDimensions:false},
 				'Other': {extensions:prismSrcExt, format:'PlainText', player:'native', specifiesDimensions:false}
 			}},
+		'Unity WebGL': {
+			name:'Unity WebGL',
+			extensions:[],
+			isProprietary:true,
+			contentType:'3D',
+			browserSupport: {
+				'Mozilla': {extensions:[], format:'', player:'proprietary', specifiesDimensions:false},
+				'Explorer': {extensions:[], format:'', player:'proprietary', specifiesDimensions:false},
+				'MobileSafari': {extensions:[], format:'', player:'proprietary', specifiesDimensions:false},
+				'Safari': {extensions:[], format:'', player:'proprietary', specifiesDimensions:false},
+				'Chrome': {extensions:[], format:'', player:'proprietary', specifiesDimensions:false},
+				'Android': {extensions:[], format:'', player:'proprietary', specifiesDimensions:false},
+				'Other': {extensions:[], format:'', player:'proprietary', specifiesDimensions:false}
+			}},
 		'Unsupported': {
 			name:'Unsupported',
 			extensions:[],
@@ -876,8 +890,10 @@ ScalarAPI.prototype.parseMediaSource = function(uri) {
 
 		} else if (uri.substr(uri.length - 3) == 'PDF') {
 			source = this.mediaSources['PDF'];
-                } else if (uri.indexOf('?iiif-manifest=1') != -1) {
-                    source = this.mediaSources['IIIF'];
+    } else if (uri.indexOf('?iiif-manifest=1') != -1) {
+      source = this.mediaSources['IIIF'];
+    } else if (uri.indexOf('?unity-webgl=1') != -1) {
+      source = this.mediaSources['Unity WebGL'];
 		// no special cases; handle normally
 		} else {
 			var currentSource;
@@ -1172,6 +1188,7 @@ ScalarAPI.prototype.decimalSecondsToHMMSS = function(seconds, showMilliseconds) 
  * A basic Ajax queue for saving relationships, as the save API presently saves one relationship at a time
  */
 ScalarAPI.prototype.saveManyRelations = function(data, completeCallback, stepCallback) {
+  console.log('saveManyRelations',data);
 
 	var self = this;
 
@@ -1224,8 +1241,8 @@ ScalarAPI.prototype.saveManyRelations = function(data, completeCallback, stepCal
 		self.queueManyRelations({
 			action:data['action'],'native':data['native'],'id':data['id'],api_key:data['api_key'],
 			'scalar:urn':data['scalar:urn'],
-			'scalar:child_rel':'grouped',
-			'scalar:contents':$(this).val()
+			'scalar:contents':$(this).val(),
+			'scalar:child_rel':'grouped'
 		});
 	});
 	// Queue references
@@ -1305,17 +1322,14 @@ ScalarAPI.prototype.saveManyRelations = function(data, completeCallback, stepCal
  * @private
  */
  ScalarAPI.prototype.queueManyRelations = function(data) {
-
-	if ('undefined'==typeof(this.relate_queue)) this.relate_queue = [];
-	this.relate_queue.push(data);
-
+   if ('undefined'==typeof(this.relate_queue)) this.relate_queue = [];
+   this.relate_queue.push(data);
 }
 
 /**
  * @private
  */
 ScalarAPI.prototype.runManyRelations = function(completeCallback, stepCallback) {
-
 	if ('undefined'==typeof(this.relate_queue) || !this.relate_queue.length) {
 		completeCallback();
 		return;
@@ -1384,6 +1398,7 @@ ScalarAPI.prototype.saveRelate = function(data, successCallback, errorCallback) 
 		});
 
 	} catch (e) {
+    console.log(e);
 		errorCallback ('ScalarAPI save page error: '+e);
 	}
 	return false;
@@ -1495,7 +1510,6 @@ ScalarAPI.prototype.modifyPageAndRelations = function(baseProperties, pageData, 
 			if ('undefined'!=typeof(_incomingRelations)) node.incomingRelations = _incomingRelations.slice(); // clone
 
 			$(node.outgoingRelations).each(function() {
-
 				switch(this.type.id) {
 
 					case 'lens':
@@ -1509,7 +1523,7 @@ ScalarAPI.prototype.modifyPageAndRelations = function(baseProperties, pageData, 
 							'scalar:contents': this.properties.content
 						};
 					break;
-				
+
 					case 'path':
 					completeRelationData[this.id] = {
 						action: 'RELATE',
@@ -1629,7 +1643,7 @@ ScalarAPI.prototype.modifyPageAndRelations = function(baseProperties, pageData, 
 				switch(this.type.id) {
 
 					// Lenses don't apply to incoming relations
-				
+
 					case 'path':
 					completeRelationData[this.id] = {
 						action: 'RELATE',
@@ -1744,15 +1758,16 @@ ScalarAPI.prototype.modifyPageAndRelations = function(baseProperties, pageData, 
 			});
 
 			// overwrite with new data
-			var property, subproperty, relationId;
+			var property, subproperty;
 			for (property in relationData) {
 				// add base properties
-				if (completePageData[property] == null) {
-					completePageData[property] = {};
+				if (completeRelationData[property] == null) {
+					completeRelationData[property] = {};
 				}
-				completePageData[property].action = 'RELATE';
+				completeRelationData[property].action = 'RELATE';
 				for (subproperty in baseProperties) {
-					completePageData[property][subproperty] = baseProperties[subproperty];
+          console.log(property,subproperty,baseProperties[subproperty]);
+					completeRelationData[property][subproperty] = baseProperties[subproperty];
 				};
 				// add the new properties
 				for (subproperty in relationData[property]) {
@@ -1760,13 +1775,20 @@ ScalarAPI.prototype.modifyPageAndRelations = function(baseProperties, pageData, 
 						if ( completeRelationData[property] == null ) {
 							completeRelationData[property] = {};
 						}
+            console.log(property,subproperty,relationData[property][subproperty]);
 						completeRelationData[property][subproperty] = relationData[property][subproperty];
 					}
 				}
+        console.log(completeRelationData[property]);
+        if (completeRelationData[property]['scalar:contents']) {
+          console.log(completeRelationData[property]['scalar:contents']);
+        }
 			};
+
 
 			for (property in completeRelationData) {
 				scalarapi.queueManyRelations(completeRelationData[property]);
+        console.log(property,completeRelationData[property]);
 			}
 
 			scalarapi.runManyRelations(function(e) {
@@ -3291,7 +3313,7 @@ ScalarNode.prototype.getDisplayTitle = function( removeMarkup ) {
 ScalarNode.prototype.getDescription = function(inNewPage) {
 
 	if ('undefined' == typeof(inNewPage)) inNewPage = false;
-	
+
 	// add the node description if available
 	var description = "";
 	if ( this.current.description != null ) {
@@ -3760,7 +3782,7 @@ ScalarVersion.prototype.parseRelations = function() {
 			}
 		}
 	}
-	
+
 	arr = this.data.json['http://scalar.usc.edu/2012/01/scalar-ns#isLensOf'];
 	if (arr) {
 		n = arr.length;
@@ -3772,7 +3794,7 @@ ScalarVersion.prototype.parseRelations = function() {
 			scalarapi.model.relationsById[relation.id] = relation;
 		}
 	}
-	
+
 }
 
 /**
@@ -3796,7 +3818,7 @@ function ScalarRelation(json, body, target, type, content) {
 
 		if (( json['http://www.openannotation.org/ns/hasBody'] != null ) && ( json['http://www.openannotation.org/ns/hasTarget'] != null )) {
 
-			this.id = scalarapi.stripAllExtensions(json['http://www.openannotation.org/ns/hasBody'][0].value)+scalarapi.stripAllExtensions(json['http://www.openannotation.org/ns/hasTarget'][0].value);
+      this.id = scalarapi.stripAllExtensions(json['http://www.openannotation.org/ns/hasBody'][0].value) + scalarapi.stripAllExtensions(json['http://www.openannotation.org/ns/hasTarget'][0].value);
 			this.body = scalarapi.model.nodesByURL[scalarapi.stripVersion(json['http://www.openannotation.org/ns/hasBody'][0].value)];
 			this.target = scalarapi.model.nodesByURL[scalarapi.stripVersion(scalarapi.stripAllExtensions(json['http://www.openannotation.org/ns/hasTarget'][0].value))];
 
