@@ -152,12 +152,17 @@ getPropertyValue:function(a){return this[a]||""},item:function(){},removePropert
 
             base.currentNode = scalarapi.model.getCurrentPageNode();
 
+
+            base.userId = 'unknown';
             if(base.logged_in){
                 //While we are logged in, check what our user level is, and set the appropriate bools
                 base.is_author = $('link#user_level').length > 0 && $('link#user_level').attr('href')=='scalar:Author';
                 base.is_commentator = $('link#user_level').length > 0 && $('link#user_level').attr('href')=='scalar:Commentator';
                 base.is_reviewer = $('link#user_level').length > 0 && $('link#user_level').attr('href')=='scalar:Reviewer';
                 base.is_editor = $('link#user_level').length > 0 && $('link#user_level').attr('href')=='scalar:Editor';
+                base.is_reader = $('link#user_level').length > 0 && $('link#user_level').attr('href')=='scalar:Reader';
+                let temp = $('link#logged_in').attr('href').split('/');
+                base.userId = parseInt(temp[temp.length - 1]);
 
                 if(base.is_author || base.is_commentator || base.is_reviewer || base.is_editor){
                      base.$el.addClass('edit_enabled');
@@ -250,12 +255,12 @@ getPropertyValue:function(a){return this[a]||""},item:function(){},removePropert
                                                     (lenses_are_active ? '<li id="lenses_menu" class="dropdown">'+
                                                         '<a role="button" aria-expanded="false"><span class="menuIcon rightArrowIcon pull-right"></span><span class="menuIcon" id="lensIcon"></span>Lenses</a>'+
                                                         '<ul class="dropdown-menu" role="menu">'+
-                                                          '<li class="vis_link"><a role="button" href="' + base.get_param(scalarapi.model.urlPrefix + 'lenses') + '"><span class="menuIcon" id="lensIcon"></span> Manage Lenses</a></li>'+
                                                         '</ul>'+
                                                     '</li>' : '')+
                                                     '<li id="vis_menu" class="dropdown">'+
                                                         '<a role="button" aria-expanded="false"><span class="menuIcon rightArrowIcon pull-right"></span><span class="menuIcon" id="visIcon"></span>Visualizations</a>'+
                                                         '<ul class="dropdown-menu" role="menu">'+
+                                                            '<li class="vis_link" data-vistype="viscurrent"><a role="button"><span class="menuIcon" id="currentIcon"></span> Current</a></li>'+
                                                             '<li class="vis_link" data-vistype="vistoc"><a role="button"><span class="menuIcon" id="tocIcon"></span> Contents</a></li>'+
                                                             '<li class="vis_link" data-vistype="visconnections"><a role="button"><span class="menuIcon" id="connectionsIcon"></span> Connections</a></li>'+
                                                             '<li class="vis_link" data-vistype="visindex"><a role="button"><span class="menuIcon" id="gridIcon"></span> Grid</a></li>'+
@@ -331,7 +336,6 @@ getPropertyValue:function(a){return this[a]||""},item:function(){},removePropert
                                                                 '<li><a href="' + base.get_param(scalarapi.model.urlPrefix + 'import/omeka') + '">Omeka sites</a></li>'+
                                                                 '<li><a href="' + base.get_param(scalarapi.model.urlPrefix + 'import/omeka_s') + '">Omeka S sites</a></li>'+
                                                                 '<li><a href="' + base.get_param(scalarapi.model.urlPrefix + 'import/soundcloud') + '">SoundCloud</a></li>'+
-                                                                '<li><a href="' + base.get_param(scalarapi.model.urlPrefix + 'import/vimeo') + '">Vimeo</a></li>'+
                                                                 '<li><a href="' + base.get_param(scalarapi.model.urlPrefix + 'import/youtube') + '">YouTube</a></li>'+
                                                             '</ul>'+
                                                         '</li>'+
@@ -611,9 +615,17 @@ getPropertyValue:function(a){return this[a]||""},item:function(){},removePropert
                             "type": "items-by-type",
                             "content-type": "all-content"
                           },
-                          "modifiers": []
+                          "modifiers": [{
+                              "type": "filter",
+                              "subtype": "relationship",
+                              "content-types": [
+                                  "all-types"
+                              ],
+                              "relationship": "any-relationship"
+                          }]
                         }
-                      ]
+                      ],
+                      "sorts": []
                     }
                     break;
 
@@ -630,9 +642,17 @@ getPropertyValue:function(a){return this[a]||""},item:function(){},removePropert
                             "type": "items-by-type",
                             "content-type": "table-of-contents"
                           },
-                          "modifiers": []
+                          "modifiers": [{
+                              "type": "filter",
+                              "subtype": "relationship",
+                              "content-types": [
+                                  "all-types"
+                              ],
+                              "relationship": "child"
+                          }]
                         }
-                      ]
+                      ],
+                      "sorts": []
                     }
                     break;
 
@@ -652,14 +672,17 @@ getPropertyValue:function(a){return this[a]||""},item:function(){},removePropert
                           },
                           "modifiers": [
                             {
-                              "type": "sort",
-                              "sort-type": "alphabetical",
-                              "metadata-field": "dcterms:title",
-                              "sort-order": "ascending"
+                              "type": "filter",
+                              "subtype": "relationship",
+                              "content-types": [
+                                  "all-types"
+                              ],
+                              "relationship": "any-relationship"
                             }
                           ]
                         }
-                      ]
+                      ],
+                      "sorts": []
                     }
                     break;
 
@@ -676,9 +699,17 @@ getPropertyValue:function(a){return this[a]||""},item:function(){},removePropert
                             "type": "items-by-type",
                             "content-type": "all-content"
                           },
-                          "modifiers": []
+                          "modifiers": [{
+                              "type": "filter",
+                              "subtype": "relationship",
+                              "content-types": [
+                                  "all-types"
+                              ],
+                              "relationship": "any-relationship"
+                          }]
                         }
-                      ]
+                      ],
+                      "sorts": []
                     }
                     break;
 
@@ -707,6 +738,7 @@ getPropertyValue:function(a){return this[a]||""},item:function(){},removePropert
                           ]
                         }
                       ],
+                      "sorts": []
                     }
                     break;
 
@@ -735,6 +767,7 @@ getPropertyValue:function(a){return this[a]||""},item:function(){},removePropert
                           ]
                         }
                       ],
+                      "sorts": []
                     }
                     break;
 
@@ -763,6 +796,34 @@ getPropertyValue:function(a){return this[a]||""},item:function(){},removePropert
                           ]
                         }
                       ],
+                      "sorts": []
+                    }
+                    break;
+
+                    case "viscurrent":
+                    options.content = 'lens';
+                    options.lens = {
+                      "visualization": {
+                        "type": "force-directed",
+                        "options": {}
+                      },
+                      "components": [
+                        {
+                          "content-selector": {
+                            "type": "specific-items",
+                            "items": [ base.currentNode.slug ]
+                          },
+                          "modifiers": [
+                            {
+                              "type": "filter",
+                              "subtype": "relationship",
+                              "content-types": ["all-types"],
+                              "relationship": "any-relationship"
+                            }
+                          ]
+                        }
+                      ],
+                      "sorts": []
                     }
                     break;
                 }
@@ -787,6 +848,11 @@ getPropertyValue:function(a){return this[a]||""},item:function(){},removePropert
             }).on('pageLoadComplete',function(){
               $('#desktopTitleWrapper').trigger("update");
             });
+
+            if (lenses_are_active) {
+              $('body').on('lensUpdated', base.getLensData);
+              base.getLensData();
+            }
 
             $( '#ScalarHeaderHelp>a' ).on('click', function(e) {
                 base.help.data( 'plugin_scalarhelp' ).toggleHelp();
@@ -1099,7 +1165,6 @@ getPropertyValue:function(a){return this[a]||""},item:function(){},removePropert
         }
         base.buildSubItem = function($container){
             var slug = $container.data('slug');
-
         }
         base.expandMenu = function(node,n){
             var expanded_menu = $('#mainMenuSubmenus');
@@ -1574,6 +1639,78 @@ getPropertyValue:function(a){return this[a]||""},item:function(){},removePropert
                 userList.append('<li><a href="' + base.get_param(addTemplateToURL(system_uri+'/register?redirect_url='+redirect_url + '&', 'cantaloupe')) + '">Register</a></li>');
             }
         }
+
+        base.getLensData = function(){
+          let bookId = $('link#book_id').attr('href');
+          let baseURL = $('link#approot').attr('href').replace('application', 'lenses');
+          let mainURL = `${baseURL}?book_id=${bookId}`;
+          $.ajax({
+            url:mainURL,
+            type: "GET",
+            dataType: 'json',
+            contentType: 'application/json',
+            async: true,
+            context: this,
+            success: base.handleLensData,
+            error: function error(response) {
+               console.log('There was an error attempting to communicate with the server.');
+               console.log(response);
+            }
+          });
+        }
+
+        base.handleLensData = function(response){
+          let data = response;
+          let privateLensArray = [];
+          let publicLensArray = [];
+
+          data.forEach(lens => {
+            if (lens.public) {
+              publicLensArray.push(lens);
+            } else if (lens.user_id == base.userId) {
+              privateLensArray.push(lens);
+            }
+          });
+          let lensMenu = $('#lenses_menu>ul');
+          lensMenu.empty();
+
+          let manageLinkTitle = "Browse Lenses";
+          if (base.is_author || base.is_editor) {
+            manageLinkTitle = "Manage Lenses";
+          }
+
+          // private lenses
+          if (privateLensArray.length > 0) {
+            lensMenu.append('<li class="header"><h2>My Private Lenses</h2></li>');
+            privateLensArray.forEach(privateLensItem => {
+              let vizType = privateLensItem.visualization.type;
+              let lensLink = $('link#parent').attr('href') + privateLensItem.slug;
+              let markup = $(`
+                <li class="lens">
+                  <a href="${lensLink}"><span class="title">${privateLensItem.title}</span>
+                  <span class="viz-icon ${vizType}"></span>
+                </li>`
+              ).appendTo(lensMenu);
+            });
+          }
+
+          // public lenses
+          if (publicLensArray.length > 0) {
+            lensMenu.append('<li class="header"><h2>Author Lenses</h2></li>');
+            publicLensArray.forEach(publicLensItem => {
+              let vizType = publicLensItem.visualization.type;
+              let lensLink = $('link#parent').attr('href') + publicLensItem.slug;
+              let markup = $(`
+                <li class="lens">
+                  <a href="${lensLink}"><span class="title">${publicLensItem.title}</span>
+                  <span class="viz-icon ${vizType}"></span>
+                </li>`
+              ).appendTo(lensMenu);
+            });
+          }
+
+          lensMenu.append('<li class="vis_link"><a role="button" href="' + base.get_param(scalarapi.model.urlPrefix + 'manage_lenses') + '"><span class="menuIcon" id="lensIcon"></span> ' + manageLinkTitle + '</a></li>');
+        };
 
         base.initSubmenus = function(el){
             var li = $(el).is('li.dropdown')?$(el):$(el).parent('li.dropdown');

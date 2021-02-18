@@ -113,13 +113,13 @@ class System extends MY_Controller {
 		$this->template->render();
 
 	}
-	
+
 	public function lenses() {
-		
+
 		if (!$this->can_save_lenses()) die ('{"error":"Lenses table (scalar_db_rel_grouped) is not installed"}');
 		$version_id = (isset($_REQUEST['version_id'])) ? (int) $_REQUEST['version_id'] : 0;
 		$book_id = (isset($_REQUEST['book_id'])) ? (int) $_REQUEST['book_id'] : 0;
-		
+
 		if (!empty($version_id)) {  // Get the Lens JSON for a particular Version
 			$this->load->model('book_model', 'books');
 			$this->load->model('lens_model', 'lenses');
@@ -128,14 +128,32 @@ class System extends MY_Controller {
 			if (empty($book_id)) die ('{"error":"Could not find a book associated with the Version ID"}');
 			$this->data['book'] = $this->books->get($book_id);
 			if (empty($this->data['book'])) die ('{"error":"Could not find a book associated with the JSON payload"}');
-			$this->data['content'] = $this->lenses->get_children($version_id);
+			$this->data['content'] = $this->lenses->get_children($version_id);  // TODO: permissions
 		} elseif (!empty($book_id)) {  // Get all of the lens JSONs for a particular book
 			$this->load->model('book_model', 'books');
 			$this->load->model('lens_model', 'lenses');
 			$this->load->model('version_model', 'versions');
 			$this->data['book'] = $this->books->get($book_id);
 			if (empty($this->data['book'])) die ('{"error":"Could not find a book associated with the JSON payload"}');
-			$this->data['content'] = $this->lenses->get_all_json($book_id);
+			$this->set_user_book_perms();
+			$is_book_admin = $this->login_is_book_admin();
+			$logged_in_user_id = (isset($this->data['login']->user_id)) ? (int) $this->data['login']->user_id : 0;
+			$lenses = $this->lenses->get_all_with_lens($book_id, null, null, false);
+			$this->data['content'] = array();
+			for ($j = count($lenses)-1; $j >= 0; $j--) {
+				$lens = json_decode($lenses[$j]->lens);
+				$is_public = (isset($lens->public) && $lens->public) ? true : false;
+				$user_level = (isset($lens->user_level)) ? $lens->user_level : null;
+				$user_id = (int) $lenses[$j]->user;  // This is the creator of the content node
+				$lens->user_id = $user_id;
+				if ($is_book_admin && $user_level == 'scalar:Author') {
+					$this->data['content'][] = $lens;
+				} elseif ($is_public) {
+					$this->data['content'][] = $lens;
+				} elseif ($user_id == $logged_in_user_id) {
+					$this->data['content'][] = $lens;
+				}
+			}
 		} else {
 			$request_body = file_get_contents('php://input');
 			if (!empty($request_body)) {  // Get nodes described by a JSON payload
@@ -170,16 +188,28 @@ class System extends MY_Controller {
 						$json['slug'] = $page->slug;
 					}
 				}
+				// Return users
+				$json['users'] = array();
+				foreach ($json['items'] as $uri => $values) {
+					if (isset($values['http://www.w3.org/ns/prov#wasAttributedTo'])) {
+						if (!isset($values['http://open.vocab.org/terms/versionnumber'])) continue;
+						$user_id = (int) substr($values['http://www.w3.org/ns/prov#wasAttributedTo'][0]['value'], 6);
+						if (!isset($json['users'][$user_id])) {
+							$user = $this->users->get_by_user_id($user_id);
+							$json['users'][$user_id] = $user->fullname;
+						}
+					}
+				}
 				$this->data['content'] = $json;
 			} else {
 				$this->data['content'] = '{"error":"Missing Version ID, Book ID, or JSON payload"}';
 			}
 		}
-		
+
 		$this->template->set_template('blank');
 		$this->template->write_view('content', 'modules/data/json', $this->data);
 		$this->template->render();
-		
+
 	}
 
 	public function login() {
@@ -195,17 +225,17 @@ class System extends MY_Controller {
 		$this->template->render();
 
 	}
-	
+
 	public function authenticator() {
 
 		$this->data['login'] = $this->login->get();
 		$this->data['title'] = $this->lang->line('install_name').': Login';
 		$this->data['norobots'] = true;
-		
+
 		$this->template->set_template('admin');
 		$this->template->write_view('content', 'modules/login/authenticator_box', $this->data);
 		$this->template->render();
-		
+
 	}
 
 	public function logout() {
@@ -298,6 +328,7 @@ class System extends MY_Controller {
 		$this->login->do_logout(true);
 		$this->data['title'] = $this->lang->line('install_name').': Reset Password';
 		$this->data['norobots'] = true;
+		$this->data['create_login_error'] = null;
 
 		$reset_string =@ $_REQUEST['key'];
 		if (empty($reset_string)) header('Location: '.base_url());
@@ -321,10 +352,11 @@ class System extends MY_Controller {
 					try {
 						$this->users->set_password_from_form_fields($user->user_id, $_POST);
 						$this->users->save_reset_string($user->user_id, '');
+						header('Location: '.confirm_slash(base_url()).'system/login?msg=2');
+						exit;
 					} catch (Exception $e) {
 	    				$this->data['create_login_error'] = $e->getMessage();
 					}
-					header('Location: '.confirm_slash(base_url()).'system/login?msg=2');
 				}
 			}
 		}
@@ -455,7 +487,11 @@ class System extends MY_Controller {
 		 			$this->load->model('resource_model', 'resources');
 		 			$json = $this->resources->get('google_authenticator');
 		 			$arr = json_decode($json, true);
-		 			$arr[$user_id] = $enable;
+		 			if ($enable) {
+		 				$arr[$user_id] = true;
+		 			} else {
+		 				unset($arr[$user_id]);
+		 			}
 		 			$json = json_encode($arr);
 		 			$this->resources->put('google_authenticator', $json);
 		 			header('Location: '.$this->base_url.'?book_id='.$book_id.'&zone='.((isset($_POST['zone']))?$_POST['zone']:'').'&pill='.((isset($_POST['pill']))?$_POST['pill']:'').'#tabs-'.((isset($_POST['zone']))?$_POST['zone']:''));
@@ -611,6 +647,21 @@ class System extends MY_Controller {
 					if (!$this->data['login_is_super']) $this->kickout();
 					$this->data['recent_user_list'] = $this->users->get_all(0, true, 'user_id', 'desc');
 					break;
+				case "do_save_disallowed_emails":  // Admin: Tools
+					if (!$this->data['login_is_super']) $this->kickout();
+					$emails = (isset($_POST['emails']) && !empty($_POST['emails'])) ? explode(',', $_POST['emails']) : array();
+					$this->load->model('resource_model', 'resources');
+					$json = json_encode($emails);
+					$this->resources->put('disallowed_emails', $json);
+					// Don't break
+				case "get_disallowed_emails":  // Admin: Tools
+					if (!$this->data['login_is_super']) $this->kickout();
+					$this->load->model('resource_model', 'resources');
+					$json = $this->resources->get('disallowed_emails');
+					$arr = json_decode($json, true);
+					if (empty($arr)) $arr = array();
+					$this->data['disallowed_emails'] = $arr;
+					break;
 				case "get_email_list":  // Admin: Tools
 					if (!$this->data['login_is_super']) $this->kickout();
 					$users = $this->users->get_all();
@@ -714,9 +765,9 @@ class System extends MY_Controller {
 		    		$json = $this->resources->get('google_authenticator');
 		    		$arr = json_decode($json, true);
 		    		$user_id = (int) $this->data['login']->user_id;
-		    		$this->data['google_authenticator_is_enabled'] = (isset($arr[$user_id]) && $arr[$user_id]) ? true : false;
+		    		$this->data['google_authenticator_is_enabled'] = (isset($arr[$user_id])) ? true : false;
 		    		foreach ($this->data['super_admins'] as $key => $value) {
-		    			if (isset($arr[$value->user_id]) && $arr[$value->user_id]) {
+		    			if (isset($arr[$value->user_id])) {
 		    				$this->data['super_admins'][$key]->google_authenticator_is_enabled = true;
 		    			}
 		    		}
@@ -741,6 +792,7 @@ class System extends MY_Controller {
 	 		$this->data['start'] = (isset($_REQUEST['start']) && is_numeric($_REQUEST['start']) && $_REQUEST['start'] > 0) ? $_REQUEST['start'] : 0;
 	 		$query = isset($_REQUEST['sq'])?$_REQUEST['sq']:null;
 	 		$id = isset($_REQUEST['id'])?(int) $_REQUEST['id']:null;
+	 		$pill = isset($_REQUEST['pill'])?$_REQUEST['pill']:null;
 			switch ($this->data['zone']) {
 			 	case 'all-users':
 			 		if($this->data['login_is_super']) {
@@ -772,6 +824,12 @@ class System extends MY_Controller {
 			 		}
 					$this->data['users'] = ($this->data['login_is_super']) ? $this->users->get_all() : array();
 					break;
+			}
+			if ('disallowed-emails' == $pill) {
+				$json = $this->resources->get('disallowed_emails');
+				$arr = json_decode($json, true);
+				if (empty($arr)) $arr = array();
+				$this->data['disallowed_emails'] = $arr;
 			}
 		}
 
@@ -811,6 +869,7 @@ class System extends MY_Controller {
 			}
 			if (empty($dashboard) || !file_exists(APPPATH.'views/modules/'.$dashboard)) $dashboard = 'dashboard';
 		}
+		
 		$this->template->set_template('admin');
 		$this->template->write_view('content', 'modules/'.$dashboard.'/content', $this->data);
 		$this->template->render();
@@ -911,6 +970,7 @@ class System extends MY_Controller {
 					$this->data['content'][$key]->start_seconds = $row->start_seconds;
 					$this->data['content'][$key]->end_seconds = $row->end_seconds;
 					$this->data['content'][$key]->points = $row->points;
+					$this->data['content'][$key]->position_3d = $row->position_3d;
 					$this->data['content'][$key]->start_line_num = $row->start_line_num;
 					$this->data['content'][$key]->end_line_num = $row->end_line_num;
 					$versions = $this->versions->get_single($this->data['content'][$key]->content_id, $this->data['content'][$key]->recent_version_id);

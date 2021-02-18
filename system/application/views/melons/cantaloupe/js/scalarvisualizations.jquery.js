@@ -34,6 +34,7 @@ window.scalarvis = { instanceCount: -1 };
     base.visStarted = false;
     base.resultsPerPage = 50;
     base.loadedAllContent = false;
+    base.inspectorVisible = false;
     base.canonicalTypeOrder = ["path", "page", "comment", "tag", "annotation", "media"];
     base.canonicalRelationOrder = [
       { type: 'path', direction: 'outgoing' },
@@ -65,7 +66,7 @@ window.scalarvis = { instanceCount: -1 };
       "tag": "All tags",
       "annotation": "All annotations",
       "media": "All media",
-      "comment": "All comments",
+      "reply": "All comments",
       "current": "Current page"
     }
     base.VisualizationFilters = {
@@ -76,17 +77,18 @@ window.scalarvis = { instanceCount: -1 };
     }
     base.VisualizationSorts = {
       'none': 'Select a sort...',
-      'alphabetical': 'A-Z',
+      'alphabetical': 'A-Z'/*,
       'creation-date': 'date created',
       'edit-date': 'date last modified',
       'type': 'item type',
       'relationship-count': 'relationship count',
-      'visit-date': 'visit date'
+      'visit-date': 'visit date'*/
     }
     base.popoverTemplate = '<div class="popover vis-help caption_font" role="tooltip"><div class="arrow"></div><h3 class="popover-title"></h3><div class="popover-content"></div></div>';
     base.currentNode = scalarapi.model.getCurrentPageNode();
     base.modalIsOpen = false;
     base.instanceId = 'scalarvis-' + window.scalarvis.instanceCount++;
+    base.selectedNodes = [];
 
     // one-time setup
     base.init = function() {
@@ -171,23 +173,6 @@ window.scalarvis = { instanceCount: -1 };
 
         base.controls = $('<div class="vis-controls form-inline form-group-sm"></div>').appendTo(base.visElement);
 
-        /*var controls_html = '<select class="vis-content-control form-control">';
-        for (var prop in base.VisualizationContent) {
-          controls_html += '<option value="' + prop + '">' + base.VisualizationContent[prop] + '</option>';
-        }
-        controls_html += '</select> ' +
-          '<select class="vis-relations-control form-control">' +
-          '<option value="all">All relationships</option>' +
-          '<option value="parents-children">Parents and children</option>' +
-          '<option value="none">No relationships</option>' +
-          '</select> ' +
-          '<select class="vis-format-control form-control">' +
-          '<option value="grid">Grid format</option>' +
-          '<option value="tree">Tree format</option>' +
-          '<option value="radial">Radial format</option>' +
-          '<option value="force-directed">Force-directed format</option>' +
-          '</select>';*/
-
         var controls_html = '<div class="vis-control-header"><b>Type</b></br><select class="vis-type-control form-control">';
         for (var prop in base.VisualizationTypes) {
           controls_html += '<option value="' + prop + '">' + base.VisualizationTypes[prop] + '</option>';
@@ -233,10 +218,17 @@ window.scalarvis = { instanceCount: -1 };
 
       base.abstractedNodesBySlug = {};
 
+      base.inspector = $('<div class="vis_inspector hidden"></div>').appendTo(base.visElement);
+
       // footer
       var visFooter = $('<div class="vis_footer"></div>').appendTo(base.visElement);
       if (options.modal) {
         visFooter.css('text-align', 'center');
+      }
+
+      if (options.caption) {
+        visFooter.append($(options.caption));
+        visFooter.css('text-align', 'left');
       }
 
       // help popover
@@ -249,8 +241,9 @@ window.scalarvis = { instanceCount: -1 };
       });
 
       // legend popover
-      if (base.getFormat() != "tagcloud") {
-        visFooter.append('|');
+      let format = base.getFormat();
+      if (format != "tagcloud" && format != "list" && format != "word-cloud" && format != "map") {
+        visFooter.append(' | ');
         base.legendButton = $('<button class="btn btn-link btn-xs" data-toggle="popover" data-placement="top" >Legend</button>');
         visFooter.append(base.legendButton);
         var type, color, name,
@@ -277,8 +270,12 @@ window.scalarvis = { instanceCount: -1 };
       }
 
       if (!isMobile) {
-        visFooter.append('|');
-        base.fullScreenButton = $('<button class="btn btn-link btn-xs" data-toggle="popover" data-placement="top" ><img alt="fullscreen" style="margin-top: -1px;" src="' + modules_uri + '/cantaloupe/images/fs_icon@2x.png" width="15" height="12"/> Full screen</button>');
+        base.inspectorSpan = $('<span> | </span>').appendTo(visFooter);
+        base.inspectorButton = $('<button class="btn btn-link btn-xs">Inspector</button>').appendTo(base.inspectorSpan);
+        base.inspectorButton.on('click', base.toggleInspector);
+
+        visFooter.append(' | ');
+        base.fullScreenButton = $('<button class="btn btn-link btn-xs"><img alt="fullscreen" style="margin-top: -1px;" src="' + modules_uri + '/cantaloupe/images/fs_icon@2x.png" width="15" height="12"/> Full screen</button>');
         visFooter.append(base.fullScreenButton);
         base.fullScreenButton.on('click', base.enterFullScreen);
       }
@@ -296,6 +293,79 @@ window.scalarvis = { instanceCount: -1 };
       });
 
     };
+
+    base.toggleInspector = function() {
+      if (!isMobile) {
+        base.inspectorVisible = !base.inspectorVisible;
+        if (base.inspectorVisible) {
+          base.inspector.removeClass('hidden');
+        } else {
+          base.inspector.addClass('hidden');
+        }
+        if (!base.visStarted) {
+          base.visualize();
+        } else {
+          base.filter();
+          base.draw();
+        }
+      }
+    }
+
+    base.updateInspector = function() {
+      if (!isMobile) {
+        let visWidth = base.visElement.width();
+        if ((visWidth <= 700 && visWidth != 0) || base.getFormat() == 'word-cloud') {
+          if (base.inspectorVisible) {
+            base.toggleInspector();
+          }
+          base.inspectorSpan.hide();
+        } else {
+          base.inspectorSpan.show();
+        }
+        base.inspector.empty();
+        if (base.selectedNodes.length > 0) {
+          let node = base.selectedNodes[base.selectedNodes.length - 1];
+          base.addInspectorInfoForNode(node);
+        } else {
+          base.inspector.append('<p>No items selected.</p>');
+        }
+      }
+    }
+
+    base.addInspectorInfoForNode = function(node) {
+      base.inspector.append('<h3 class="inspector-title heading_weight">' + node.title + '</h3>');
+      let inspectorInfo;
+      if (node.scalarTypes.page != null) {
+        inspectorInfo = $('<div class="page-preview">' +
+          '<p class="inspector-description"></p>' +
+          '<div class="inspector-buttons">' +
+            '<a class="btn btn-primary btn-xs view-node-btn" role="button" target="_blank" href="' + node.url + '">View page</a> ' +
+          '</div>' +
+          '<h4>Details</h4>' +
+          '<div class="citations citations_metadata"></div>' +
+        '</div>').appendTo(base.inspector);
+      } else {
+        let thumbnailClass = 'inspector-thumbnail';
+        let thumbnailUrl = '#';
+        if (node.thumbnail) {
+          thumbnailUrl = node.thumbnail;
+        } else {
+          thumbnailClass += ' hidden';
+        }
+        inspectorInfo = $('<div class="media-preview">' +
+          '<p class="inspector-description"></p>' +
+          '<img class="' + thumbnailClass + '" src="' + thumbnailUrl + '" alt="' + node.current.description + '" />' +
+          '<div class="inspector-buttons">' +
+            '<a class="btn btn-primary btn-xs view-node-btn" role="button" target="_blank" href="' + node.url + '">View media page</a> ' +
+            '<a class="btn btn-primary btn-xs view-media-btn" role="button" target="_blank" href="' + node.current.sourceFile + '">View source file</a>' +
+          '</div>' +
+          '<h4>Details</h4>' +
+          '<div class="citations citations_metadata"></div>' +
+        '</div>').appendTo(base.inspector);
+      }
+      inspectorInfo.find('.inspector-description').html(node.current.description);
+      addMetadataTableForNodeToElement(node, inspectorInfo.find('.citations_metadata'));
+    }
 
     base.enterFullScreen = function() {
       page.isFullScreen = true; // a hack, but if we don't do this then Safari tries to reload the media before it recieves the full screen event that tells it not to reload the media
@@ -327,8 +397,9 @@ window.scalarvis = { instanceCount: -1 };
         base.options.lens.components[0]['content-selector']['items'] = [base.currentNode.slug];
       } else {
         base.options.lens.components[0]['content-selector']['content-type'] = $(this).val();
-        base.options.lens.components[0]['content-selector']['items'] = [];
+        delete base.options.lens.components[0]['content-selector'].items;
       }
+      base.updateLensModifiers();
       base.getLensResults();
     }
 
@@ -338,12 +409,12 @@ window.scalarvis = { instanceCount: -1 };
     }
 
     base.onSortSelect = function() {
-      base.updateLensModifiers();
+      base.updateSorts();
       base.getLensResults();
     }
 
     base.onSortOrderSelect = function() {
-      base.updateLensModifiers();
+      base.updateSorts();
       base.getLensResults();
     }
 
@@ -356,12 +427,30 @@ window.scalarvis = { instanceCount: -1 };
           "subtype": "relationship",
           "relationship": base.visElement.find(".vis-filter-control").val()
         };
-        if (filterControlVal == 'any-relationship') {
-          filter.contentTypes = ["all-types"];
-        } else {
-          filter.contentTypes = [base.visElement.find(".vis-content-control").val()];
+        let contentControlVal = base.visElement.find(".vis-content-control").val();
+        switch (contentControlVal) {
+
+          case 'all-content':
+          case 'table-of-contents':
+          case 'current':
+          case 'page':
+          filter["content-types"] = ["all-types"];
+          break;
+
+          case 'media':
+          filter["content-types"] = ["reference"];
+          break;
+
+          default:
+          filter["content-types"] = [contentControlVal];
+          break;
+
         }
+        base.options.lens.components[0].modifiers.push(filter);
       }
+    }
+
+    base.updateSorts = function() {
       if (base.visElement.find(".vis-sort-control").val() != 'none') {
         if (base.visElement.find(".vis-sort-order-control").val() == 'none') {
           base.visElement.find(".vis-sort-order-control").val('ascending')
@@ -375,7 +464,7 @@ window.scalarvis = { instanceCount: -1 };
         if (sort['sort-type'] == 'alphabetical') {
           sort['metadata-field'] = "dcterms:title";
         }
-        base.options.lens.components[0].modifiers.push(sort);
+        base.options.lens.sorts = [sort];
       }
     }
 
@@ -392,12 +481,14 @@ window.scalarvis = { instanceCount: -1 };
         base.updateLoadingMsg('', percentDone, 0, 1, null);
       }, 1000)
       if (base.lensRequest) base.lensRequest.abort();
+      let requestData = JSON.parse(JSON.stringify(base.options.lens));
+      delete requestData.items;
       base.lensRequest = $.ajax({
         url: url,
         type: "POST",
         dataType: 'json',
         contentType: 'application/json',
-        data: JSON.stringify(base.options.lens),
+        data: JSON.stringify(requestData),
         async: true,
         context: this,
         success: (data) => {
@@ -469,7 +560,7 @@ window.scalarvis = { instanceCount: -1 };
       }
       if (base.options.lens) {
         delete(base.options.format);
-        delete(base.options.relations);
+        base.options.relations = 'from-lens';
         if (!base.options.lens.items) {
           base.getLensResults();
         }
@@ -520,7 +611,20 @@ window.scalarvis = { instanceCount: -1 };
       if (base.options.lens) {
         base.validateLens();
         base.visElement.find(".vis-type-control").val(base.options.lens.visualization.type);
-        base.visElement.find(".vis-content-control").val(base.options.lens.components[0]['content-selector']['content-type']);
+        let isCurrentVis = false;
+        let items = base.options.lens.components[0]["content-selector"].items;
+        if (items) {
+          if (items.length == 1) {
+            if (items[0] == base.currentNode.slug) {
+              isCurrentVis = true;
+            }
+          }
+        }
+        if (isCurrentVis) {
+          base.visElement.find(".vis-content-control").val('current');
+        } else {
+          base.visElement.find(".vis-content-control").val(base.options.lens.components[0]['content-selector']['content-type']);
+        }
         base.visElement.find(".vis-filter-control").val('none');
         base.visElement.find(".vis-sort-control").val('none');
         base.visElement.find(".vis-sort-order-control").val('none');
@@ -535,23 +639,18 @@ window.scalarvis = { instanceCount: -1 };
             }
             break;
 
-            case 'sort':
-            let sort = null;
-            base.options.lens.components[0].modifiers.forEach(modifier => {
-              if (modifier.type === 'sort') {
-                sort = modifier;
-              }
-            });
-            if (sort) {
-              base.visElement.find(".vis-sort-control").val(sort['sort-type']);
-              base.visElement.find(".vis-sort-order-control").val(sort['sort-order']);
-            } else {
-              base.visElement.find(".vis-sort-control").val('none');
-              base.visElement.find(".vis-sort-order-control").val('none');
-            }
-            break;
           }
         });
+        if (base.options.lens.sorts) {
+          if (base.options.lens.sorts.length > 0) {
+            let sort = base.options.lens.sorts[0];
+            base.visElement.find(".vis-sort-control").val(sort['sort-type']);
+            base.visElement.find(".vis-sort-order-control").val(sort['sort-order']);
+          } else {
+            base.visElement.find(".vis-sort-control").val('none');
+            base.visElement.find(".vis-sort-order-control").val('none');
+          }
+        }
       }
     }
 
@@ -581,7 +680,7 @@ window.scalarvis = { instanceCount: -1 };
         case "comment":
         case "reply":
           var componentToHex = function(c) {
-            var hex = c.toString(16);
+            var hex = Math.round(c).toString(16);
             return hex.length == 1 ? "0" + hex : hex;
           }
           color = d3.rgb("#ffff33").darker();
@@ -779,9 +878,10 @@ window.scalarvis = { instanceCount: -1 };
       base.sortedNodes = [];
       base.nodesBySlug = {};
       base.svg = null;
-      base.selectedNodes = [];
-      if (base.currentNode) {
+      if (base.currentNode && base.currentNode.type.id != 'lens') {
         base.selectedNodes.push(base.currentNode);
+        base.loadNode(base.currentNode.slug, 0, 0, base.updateInspector);
+        base.updateInspector();
       }
       base.hasBeenDrawn = false;
       base.loadSequence = null;
@@ -867,12 +967,15 @@ window.scalarvis = { instanceCount: -1 };
 
     };
 
-    base.loadNode = function(slug, ref, depth) {
+    base.loadNode = function(slug, ref, depth, success = null, parseNode = true) {
       //console.log( 'load node' );
       if (depth == null) {
         depth = 1;
       }
-      scalarapi.loadNode(slug, true, base.parseNode, null, depth, ref, null, 0, 100, null, null, false);
+      scalarapi.loadNode(slug, true, function(d) {
+        if (success) success(d);
+        if (parseNode) base.parseNode(d);
+      }, null, depth, ref, null, 0, 100, null, null, true);
     }
 
     base.parseNode = function(data) {
@@ -1236,43 +1339,75 @@ window.scalarvis = { instanceCount: -1 };
           }
 
           // get relationships for each node
-          n = base.contentNodes.length;
-          for (i = 0; i < n; i++) {
-            node = base.contentNodes[i];
-            relNodes = [];
-            rels = [];
-            if (base.options.relations == "all") {
+          // if we're in a modal that means there will never be more than one modifier
+          // this is needed since the lens doesn't return relationships
+          // since we don't know which node was returned from which part of the lens,
+          // we cast a wide net, possibly getting more relationships than we need
+          // any extra nodes will be filtered out below
+          if (base.options.modal) {
+            if (base.options.lens.components[0].modifiers.length > 0) {
+              n = base.contentNodes.length;
+              for (i = 0; i < n; i++) {
+                node = base.contentNodes[i];
+                relNodes = [];
+                rels = [];
+                if (base.options.lens.components[0].modifiers[0].relationship == 'any-relationship') {
+                  relNodes = node.getRelatedNodes(null, "both");
+                  rels = node.getRelations(null, "both");
+                  relNodes.forEach((relNode, index) => {
+                    if (base.options.lens.items[relNode.url]) {
+                      base.relatedNodes.push(relNode);
+                      base.relations.push(rels[index]);
+                    }
+                  });
+                } else {
+                  relNodes = node.getRelatedNodes(base.options.lens.components[0].modifiers[0]['content-types'][0], "both");
+                  rels = node.getRelations(base.options.lens.components[0].modifiers[0]['content-types'][0], "both");
+                  relNodes.forEach((relNode, index) => {
+                    if (base.options.lens.items[relNode.url]) {
+                      base.relatedNodes.push(relNode);
+                      base.relations.push(rels[index]);
+                    }
+                  });
+                }
+                node.connectionCount = rels.length;
+                base.maxConnections = Math.max(base.maxConnections, node.connectionCount);
+              }
+            }
+          } else {
+            // get relationships for each node
+            n = base.contentNodes.length;
+            for (i = 0; i < n; i++) {
+              node = base.contentNodes[i];
               relNodes = node.getRelatedNodes(null, "both");
               rels = node.getRelations(null, "both");
-              relNodes.forEach((relNode, index) => {
-                if (base.options.lens.items[relNode.url]) {
-                  base.relatedNodes.push(relNode);
-                  base.relations.push(rels[index]);
-                }
-              });
-            } else if (base.options.relations != "none") {
-              relNodes = node.getRelatedNodes(base.options.relations, "both");
-              rels = node.getRelations(base.options.relations, "both");
-              relNodes.forEach((relNode, index) => {
-                if (base.options.lens.items[relNode.url]) {
-                  base.relatedNodes.push(relNode);
-                  base.relations.push(rels[index]);
-                }
-              });
+              base.relatedNodes = base.relatedNodes.concat(relNodes);
+              base.relations = base.relations.concat(rels);
+              node.connectionCount = rels.length;
+              base.maxConnections = Math.max(base.maxConnections, node.connectionCount);
             }
-            node.connectionCount = rels.length;
-            base.maxConnections = Math.max(base.maxConnections, node.connectionCount);
           }
 
           n = base.selectedNodes.length;
-          for (i = 0; i < n; i++) {
+          for (i = n-1; i >= 0; i--) {
             node = base.selectedNodes[i];
-            relNodes = node.getRelatedNodes(null, "both");
-            rels = node.getRelations(null, "both");
-            base.relatedNodes = base.relatedNodes.concat(relNodes);
-            base.relations = base.relations.concat(rels);
-            node.connectionCount = rels.length;
-            base.maxConnections = Math.max(base.maxConnections, node.connectionCount);
+            if (base.contentNodes.indexOf(node) != -1) {
+              relNodes = node.getRelatedNodes(null, "both");
+              rels = node.getRelations(null, "both");
+              base.relatedNodes = base.relatedNodes.concat(relNodes);
+              base.relations = base.relations.concat(rels);
+              node.connectionCount = rels.length;
+              base.maxConnections = Math.max(base.maxConnections, node.connectionCount);
+            }
+          }
+
+          // filter out any related node not actually returned by the lens
+          n = base.relatedNodes.length;
+          for (i = n-1; i >= 0; i--) {
+            node = base.relatedNodes[i];
+            if (base.contentNodes.indexOf(node) == -1) {
+              base.relatedNodes.splice(i, 1);
+            }
           }
           break;
 
@@ -1362,8 +1497,6 @@ window.scalarvis = { instanceCount: -1 };
 
       }
 
-      //console.log( 'related nodes', base.relatedNodes );
-
       newSortedNodes = base.arrayUnique(base.contentNodes.concat(base.relatedNodes));
       oldNodes = base.sortedNodes.concat();
 
@@ -1450,7 +1583,9 @@ window.scalarvis = { instanceCount: -1 };
               })
               let hasSingleType;
               if (base.options.lens.components.length === 1 && base.options.lens.components[0]['content-selector'].type === 'items-by-type') {
-                hasSingleType = base.options.lens.components[0]['content-selector']['content-type'];
+                if (base.options.lens.components[0]['content-selector']['content-type'] != 'all-content') {
+                  hasSingleType = base.options.lens.components[0]['content-selector']['content-type'];
+                }
               }
               base.updateTypeHierarchy(false, true, hasSingleType, hasToc);
               break;
@@ -1467,6 +1602,18 @@ window.scalarvis = { instanceCount: -1 };
       //console.log( 'sorted: ' + base.sortedNodes.length );
       //console.log( 'links: ' + base.links.length );
 
+      this.validateSelectedNodes();
+    }
+
+    base.validateSelectedNodes = function() {
+      // remove any nodes from the current selection that aren't in the current results
+      let n = base.selectedNodes.length;
+      for (let i=n-1; i>=0; i--) {
+        let node = base.selectedNodes[i];
+        if (base.sortedNodes.indexOf(node) == -1) {
+          base.selectedNodes.splice(i, 1);
+        }
+      }
     }
 
     base.processNode = function(node) {
@@ -1573,7 +1720,18 @@ window.scalarvis = { instanceCount: -1 };
         }
       }
 
+      let isCurrentContent = false;
       if (base.options.content == "current") {
+        isCurrentContent = true;
+      } else if (base.options.lens) {
+        if (base.options.lens.components[0]['content-selector'].items) {
+          if (base.options.lens.components[0]['content-selector'].type == 'items-by-type' && base.options.lens.components[0]['content-selector'].items.length == 1 && base.options.lens.components[0]['content-selector'].items[0] == base.currentNode.slug) {
+            isCurrentContent = true;
+          }
+        }
+      }
+
+      if (isCurrentContent) {
 
         // replace the root node with the current node if showing types
         // is not a priority
@@ -1604,6 +1762,18 @@ window.scalarvis = { instanceCount: -1 };
         case "current":
           if (topLevelType) {
             typeList = [];
+          } else {
+            typeList = base.canonicalTypeOrder;
+          }
+          break;
+
+        case "lens":
+          if (topLevelType) {
+            if (isCurrentContent) {
+              typeList = [];
+            } else {
+              typeList = [topLevelType];
+            }
           } else {
             typeList = base.canonicalTypeOrder;
           }
@@ -1777,6 +1947,23 @@ window.scalarvis = { instanceCount: -1 };
           relationList = [];
           break;
 
+        case "from-lens":
+          relationList = [];
+          if (base.options.lens.components[0].modifiers.length > 0) {
+            switch (base.options.lens.components[0].modifiers[0].relationship) {
+              case 'any-relationship':
+              relationList = base.canonicalRelationOrder;
+              break;
+              case 'parent':
+              relationList = [{ type: null, direction: 'incoming' }];
+              break;
+              case 'child':
+              relationList = [{ type: null, direction: 'outgoing' }];
+              break;
+            }
+          }
+          break;
+
         default:
           if (base.options.relations == "reference") {
             relationList = [{ type: base.options.relations, direction: 'incoming' }];
@@ -1797,23 +1984,35 @@ window.scalarvis = { instanceCount: -1 };
               sourceData.children = [];
             }
             o = nodes.length;
+            let okToProcess;
             for (j = 0; j < o; j++) {
               destNode = nodes[j];
-              base.processNode(destNode);
-              destData = {
-                title: destNode.title,
-                shortTitle: destNode.shortTitle,
-                node: destNode,
-                type: destNode.type.id,
-                showsTitle: true,
-                parent: sourceData,
-                children: null,
-                localIndex: sourceData.children.length
-              };
-              sourceData.children.push(destData);
-              if (base.processedNodesForHierarchy.indexOf(destNode) == -1) {
-                base.processedNodesForHierarchy.push(destNode);
-                base.addRelationsForHierarchyNode(destData);
+              okToProcess = true;
+              // if this is a lens, don't include items not returned by the lens
+              if (base.options.content == 'lens') {
+                if (base.options.lens.items) {
+                  if (!base.options.lens.items[destNode.url]) {
+                    okToProcess = false;
+                  }
+                }
+              }
+              if (okToProcess) {
+                base.processNode(destNode);
+                destData = {
+                  title: destNode.title,
+                  shortTitle: destNode.shortTitle,
+                  node: destNode,
+                  type: destNode.type.id,
+                  showsTitle: true,
+                  parent: sourceData,
+                  children: null,
+                  localIndex: sourceData.children.length
+                };
+                sourceData.children.push(destData);
+                if (base.processedNodesForHierarchy.indexOf(destNode) == -1) {
+                  base.processedNodesForHierarchy.push(destNode);
+                  base.addRelationsForHierarchyNode(destData);
+                }
               }
             }
           }
@@ -1971,16 +2170,10 @@ window.scalarvis = { instanceCount: -1 };
         base.visualization.empty();
       }
 
-      switch (base.getFormat()) {
-
-        case "force-directed":
-          if (base.force != null) {
-            base.force.on("tick", null);
-          }
-          base.force = null;
-          base.links = [];
-          break;
-
+      if (base.getFormat() != 'force-directed' && base.force != null) {
+        base.force.on("tick", null);
+        base.force = null;
+        base.links = [];
       }
     }
 
@@ -2001,46 +2194,67 @@ window.scalarvis = { instanceCount: -1 };
 
         case "grid":
           needsInstantiation = base.visInstance ? base.visInstance.constructor.name != 'GridVisualization' : true;
-          if (needsInstantiation) base.visInstance = new GridVisualization();
+          if (needsInstantiation) {
+            if (base.visInstance) base.visInstance.destroy();
+            base.visInstance = new GridVisualization();
+          }
           break;
 
         case "tree":
-          needsInstantiation = base.visInstance ? base.visInstance.constructor.name != 'TreeVisualization' : true;
-          if (needsInstantiation) base.visInstance = new TreeVisualization();
+          base.visInstance = new TreeVisualization(); // rebuild it every time to avoid issues with data constancy
           break;
 
         case "radial":
           needsInstantiation = base.visInstance ? base.visInstance.constructor.name != 'RadialVisualization' : true;
-          if (needsInstantiation) base.visInstance = new RadialVisualization();
+          if (needsInstantiation) {
+            if (base.visInstance) base.visInstance.destroy();
+            base.visInstance = new RadialVisualization();
+          }
           break;
 
         case "force-directed":
           needsInstantiation = base.visInstance ? base.visInstance.constructor.name != 'ForceDirectedVisualization' : true;
-          if (needsInstantiation) base.visInstance = new ForceDirectedVisualization();
+          if (needsInstantiation) {
+            if (base.visInstance) base.visInstance.destroy();
+            base.visInstance = new ForceDirectedVisualization();
+          }
           break;
 
         case "tagcloud":
           needsInstantiation = base.visInstance ? base.visInstance.constructor.name != 'TagCloudVisualization' : true;
-          if (needsInstantiation) base.visInstance = new TagCloudVisualization();
+          if (needsInstantiation) {
+            if (base.visInstance) base.visInstance.destroy();
+            base.visInstance = new TagCloudVisualization();
+          }
           break;
 
         case "map":
           needsInstantiation = base.visInstance ? base.visInstance.constructor.name != 'MapVisualization' : true;
-          if (needsInstantiation) base.visInstance = new MapVisualization();
+          if (needsInstantiation) {
+            if (base.visInstance) base.visInstance.destroy();
+            base.visInstance = new MapVisualization();
+          }
           break;
 
         case "word-cloud":
           needsInstantiation = base.visInstance ? base.visInstance.constructor.name != 'WordCloudVisualization' : true;
-          if (needsInstantiation) base.visInstance = new WordCloudVisualization();
+          if (needsInstantiation) {
+            if (base.visInstance) base.visInstance.destroy();
+            base.visInstance = new WordCloudVisualization();
+          }
           break;
 
         case "list":
           needsInstantiation = base.visInstance ? base.visInstance.constructor.name != 'ListVisualization' : true;
-          if (needsInstantiation) base.visInstance = new ListVisualization();
+          if (needsInstantiation) {
+            if (base.visInstance) base.visInstance.destroy();
+            base.visInstance = new ListVisualization();
+          }
           break;
 
       }
-      base.visInstance.draw();
+      base.updateInspector();
+      if (base.visInstance) base.visInstance.draw();
     };
 
     /**************************
@@ -2060,7 +2274,7 @@ window.scalarvis = { instanceCount: -1 };
       // no need to call directly
       updateSize() {
         var isFullScreenNow = document.fullScreen || document.mozFullScreen || document.webkitIsFullScreen;
-        this.size.width = base.visElement.width();
+        this.size.width = base.visElement.width() - (base.inspectorVisible ? 320 : 0);
         if (!isFullScreenNow) {
           if (window.innerWidth > 768) {
             if (base.options.modal) {
@@ -2072,6 +2286,7 @@ window.scalarvis = { instanceCount: -1 };
             this.size.height = 300;
           }
         } else {
+          this.size.width = window.innerWidth;
           this.size.height = window.innerHeight;
         }
         if (this.isFullScreen != isFullScreenNow) {
@@ -2083,11 +2298,22 @@ window.scalarvis = { instanceCount: -1 };
       // call using super.draw() from your draw method
       draw() {
         this.updateSize();
+        base.visualization.css('width', this.size.width + 'px');
         if (!this.hasBeenDrawn && base.visElement.width() > 0) {
           base.helpButton.attr('data-content', this.getHelpContent());
           this.setupElement();
           this.hasBeenDrawn = true;
         }
+      }
+
+      updateNoResultsMessage(nodeArray) {
+         if (nodeArray.length == 0) {
+           if (base.visualization.find('.no-results-msg').length == 0) {
+             base.visualization.prepend('<div class="no-results-msg caption_font">No results to display.</div>');
+           }
+         } else {
+           base.visualization.find('.no-results-msg').remove();
+         }
       }
 
       // override with your own version that returns HTML
@@ -2096,10 +2322,14 @@ window.scalarvis = { instanceCount: -1 };
         return 'This is sample help content.';
       }
 
-      // overrider with your own version that sets up the
-      // base.visualization element
+      // override to set up the base.visualization element
       setupElement() {
         // set up the element
+      }
+
+      // override to clean up the vis if neccessary
+      destroy() {
+        // clean up the vis
       }
 
     }
@@ -2120,7 +2350,7 @@ window.scalarvis = { instanceCount: -1 };
        draw() {
          super.draw();
          if (base.svg != null) {
-           this.itemsPerRow = Math.floor(this.size.width / this.colWidth);
+           this.itemsPerRow = Math.floor((this.size.width - 1) / this.colWidth);
            this.colScale = d3.scaleLinear([0, this.itemsPerRow], [0, this.itemsPerRow * this.colWidth]);
            var unitWidth = Math.max(this.colScale(1) - this.colScale(0), 36);
            var rowCount = Math.ceil(base.sortedNodes.length / this.itemsPerRow);
@@ -2132,17 +2362,32 @@ window.scalarvis = { instanceCount: -1 };
            var node;
            base.svg.attr('height', fullHeight);
 
-           //this.box = this.gridBoxLayer.selectAll('.rowBox');
-
            var tocNode = scalarapi.model.getMainMenuNode();
-           var gridNodes = base.sortedNodes.concat();
-           var index = gridNodes.indexOf(tocNode);
+
+           this.isLocallySorted = true;
+           if (base.options.content === 'lens') {
+             if (base.options.lens.sorts) {
+               if (base.options.lens.sorts.length > 0) {
+                 this.isLocallySorted = false;
+               }
+             }
+           }
+
+           if (this.isLocallySorted) {
+             this.gridNodes = base.sortedNodes.concat();
+           } else {
+             this.gridNodes = base.contentNodes.concat();
+           }
+
+           this.updateNoResultsMessage(this.gridNodes);
+
+           var index = this.gridNodes.indexOf(tocNode);
            if (index != -1) {
-             gridNodes.splice(index, 1);
+             this.gridNodes.splice(index, 1);
            }
 
            this.box = this.gridBoxLayer.selectAll('.rowBox')
-             .data(gridNodes, (d) => { return d.type.id + '-' + d.slug; })
+             .data(this.gridNodes, (d) => { return d.type.id + '-' + d.slug; })
              .join(
                enter => enter.append('svg:rect')
                  .each(function(d) { d.svgTarget = this; })
@@ -2162,9 +2407,11 @@ window.scalarvis = { instanceCount: -1 };
                    var index = base.selectedNodes.indexOf(d);
                    if (index == -1) {
                      base.selectedNodes.push(d);
+                     base.loadNode(d.slug, 0, 0, base.updateInspector);
                    } else {
                      base.selectedNodes.splice(index, 1);
                    }
+                   base.updateInspector();
                    this.updateGraph();
                    return true;
                  })
@@ -2182,7 +2429,16 @@ window.scalarvis = { instanceCount: -1 };
                  })
              );
 
-           if (((base.options.content == "path") || (base.options.content == "all") || (base.options.content == "lens")) && ((base.options.relations == "path") || (base.options.relations == "all") || (base.options.content == "lens"))) {
+          let visualizePaths = false;
+          if ((base.options.content == "path" || base.options.content == "all") && (base.options.relations == "path" || base.options.relations == "all")) {
+            visualizePaths = true;
+          }
+          let filterControlVal = base.visElement.find(".vis-filter-control").val();
+          if (base.options.content == "lens" && (filterControlVal == 'any-relationship' || filterControlVal == 'child' || !filterControlVal)) {
+            visualizePaths = true;
+          }
+
+           if (visualizePaths) {
              // path vis line function
              this.line = d3.line()
                .x((d) => {
@@ -2254,10 +2510,10 @@ window.scalarvis = { instanceCount: -1 };
                })
                .attr('class', 'pathDot')
                .attr('cx', (d) => {
-                 return d[base.instanceId].x + (this.boxSize * .5);
+                 return d[base.instanceId] ? d[base.instanceId].x + (this.boxSize * .5) : 0;
                })
                .attr('cy', (d) => {
-                 return d[base.instanceId].y + (this.boxSize * .5);
+                 return d[base.instanceId] ? d[base.instanceId].y + (this.boxSize * .5) : 0;
                })
                .attr('r', function(d, i) { return (i == 0) ? 5 : 3; });
 
@@ -2270,13 +2526,15 @@ window.scalarvis = { instanceCount: -1 };
                })
                .attr('class', 'pathDotText')
                .attr('dx', function(d) {
-                 return d[base.instanceId].x + 3;
+                 return d[base.instanceId] ? d[base.instanceId].x + 3 : 0;
                })
                .attr('dy', function(d) {
-                 return d[base.instanceId].y + this.boxSize - 3;
+                 return d[base.instanceId] ? d[base.instanceId].y + this.boxSize - 3 : 0;
                })
                .text(function(d, i) { return (i == 0) ? '' : i; });
 
+           } else {
+             this.gridPathLayer.selectAll('g.pathGroup').remove();
            }
 
            this.redrawGrid();
@@ -2302,7 +2560,6 @@ window.scalarvis = { instanceCount: -1 };
        setupElement() {
          base.visualization.empty();
          base.visualization.removeClass('bounded');
-         base.visualization.css('width', base.visElement.width() - 20); // accounts for padding
          base.svg = d3.select(base.visualization[0]).append('svg:svg').attr('width', this.size.width);
          this.gridBoxLayer = base.svg.append('svg:g')
            .attr('width', this.size.width)
@@ -2335,26 +2592,32 @@ window.scalarvis = { instanceCount: -1 };
        }
 
        redrawGrid() {
-         this.box.sort(base.typeSort)
-           .attr('fill', (d) => { return (base.rolloverNode == d) ? d3.rgb(base.highlightColorScale(d.type.singular)).darker() : base.highlightColorScale(d.type.singular); })
-           .attr('fill-opacity', this.calculateOpacity)
-           .attr('x', (d, i) => { d[base.instanceId].x = this.colScale(i % this.itemsPerRow) + 0.5; return d[base.instanceId].x; })
-           .attr('y', (d, i) => { d[base.instanceId].y = this.rowScale(Math.floor(i / this.itemsPerRow) + 1) - this.boxSize + 0.5; return d[base.instanceId].y; });
+         if (this.isLocallySorted) {
+           this.box.sort(base.typeSort).attr('fill', (d) => { return (base.rolloverNode == d) ? d3.rgb(base.highlightColorScale(d.type.singular)).darker() : base.highlightColorScale(d.type.singular); })
+             .attr('fill-opacity', this.calculateOpacity)
+             .attr('x', (d, i) => { d[base.instanceId].x = this.colScale(i % this.itemsPerRow) + 0.5; return d[base.instanceId].x; })
+             .attr('y', (d, i) => { d[base.instanceId].y = this.rowScale(Math.floor(i / this.itemsPerRow) + 1) - this.boxSize + 0.5; return d[base.instanceId].y; });
+         } else {
+           this.box.attr('fill', (d) => { return (base.rolloverNode == d) ? d3.rgb(base.highlightColorScale(d.type.singular)).darker() : base.highlightColorScale(d.type.singular); })
+             .attr('fill-opacity', this.calculateOpacity)
+             .attr('x', (d, i) => { d[base.instanceId].x = this.colScale(i % this.itemsPerRow) + 0.5; return d[base.instanceId].x; })
+             .attr('y', (d, i) => { d[base.instanceId].y = this.rowScale(Math.floor(i / this.itemsPerRow) + 1) - this.boxSize + 0.5; return d[base.instanceId].y; });
+         }
 
          this.gridPathLayer.selectAll('path').attr('d', this.line);
          this.gridPathLayer.selectAll('circle.pathDot')
            .attr('cx', (d) => {
-             return d[base.instanceId].x + (this.boxSize * .5);
+             return d[base.instanceId] ? d[base.instanceId].x + (this.boxSize * .5) : 0;
            })
            .attr('cy', (d) => {
-             return d[base.instanceId].y + (this.boxSize * .5);
+             return d[base.instanceId] ? d[base.instanceId].y + (this.boxSize * .5) : 0;
            });
          this.gridPathLayer.selectAll('text.pathDotText')
            .attr('dx', (d) => {
-             return d[base.instanceId].x + 3;
+             return d[base.instanceId] ? d[base.instanceId].x + 3 : 0;
            })
            .attr('dy', (d) => {
-             return d[base.instanceId].y + this.boxSize - 3;
+             return d[base.instanceId] ? d[base.instanceId].y + this.boxSize - 3 : 0;
            });
 
          var visPos = base.visualization.position();
@@ -2416,7 +2679,7 @@ window.scalarvis = { instanceCount: -1 };
 
          // draw connection lines
          linkEnter.selectAll('line.connection')
-           .data(function(d) {
+           .data((d) => {
              var relationArr = [];
              var relations = d.outgoingRelations.concat(d.incomingRelations);
              var relation;
@@ -2425,7 +2688,7 @@ window.scalarvis = { instanceCount: -1 };
              for (i = 0; i < n; i++) {
                relation = relations[i];
                if (relation.type.id == base.options.relations || base.options.relations == "all" || base.options.content == "lens") {
-                 if (relation.type.id != 'path' && base.sortedNodes.indexOf(relation.body) != -1 && base.sortedNodes.indexOf(relation.target) != -1) {
+                 if (relation.type.id != 'path' && this.gridNodes.indexOf(relation.body) != -1 && this.gridNodes.indexOf(relation.target) != -1) {
                    if (!relation.body.scalarTypes.toc) {
                      relationArr.push(relations[i]);
                    }
@@ -2446,7 +2709,7 @@ window.scalarvis = { instanceCount: -1 };
 
          // draw connection dots
          linkEnter.selectAll('circle.connectionDot')
-           .data(function(d) {
+           .data((d) => {
              var nodeArr = [];
              var relations = d.outgoingRelations.concat(d.incomingRelations);
              var relation;
@@ -2455,7 +2718,7 @@ window.scalarvis = { instanceCount: -1 };
              for (i = 0; i < n; i++) {
                relation = relations[i];
                if (relation.type.id == base.options.relations || base.options.relations == "all" || base.options.content == "lens") {
-                 if ((relation.type.id != 'path') && (base.sortedNodes.indexOf(relation.body) != -1) && (base.sortedNodes.indexOf(relation.target) != -1)) {
+                 if ((relation.type.id != 'path') && (this.gridNodes.indexOf(relation.body) != -1) && (this.gridNodes.indexOf(relation.target) != -1)) {
                    if (!relation.body.scalarTypes.toc) {
                      nodeArr.push({ role: 'body', node: relation.body, type: relation.type });
                      nodeArr.push({ role: 'target', node: relation.target, type: relation.type });
@@ -2495,6 +2758,7 @@ window.scalarvis = { instanceCount: -1 };
           this.root.descendants().forEach((d,i) => {
             d._children = d.children;
           })
+          this.updateNoResultsMessage(base.sortedNodes);
           this.container = base.svg.selectAll('g.container');
           // collapse all nodes except the root and its children
           this.branchExpand(this.root);
@@ -2649,23 +2913,33 @@ window.scalarvis = { instanceCount: -1 };
 
         nodeEnter.append("svg:circle")
           .attr("r", 1e-6)
-          .style("fill", function(d) { return !d.children && d._children ? d3.hsl(base.highlightColorScale(d.data.type, "noun", '#777')).brighter(1.5) : "#fff"; })
-          .style("stroke", function(d) { return base.highlightColorScale(d.data.type, "noun", '#777') })
+          .style("fill", (d) => { return !d.children && d._children ? d3.hsl(base.highlightColorScale(d.data.type, "noun", '#777')).brighter(1.5) : "#fff"; })
+          .style("stroke", (d) => { return base.highlightColorScale(d.data.type, "noun", '#777') })
           .on('touchstart', function(d) { d3.event.stopPropagation(); })
           .on('mousedown', function(d) { d3.event.stopPropagation(); })
           .on("click", (d) => {
             // the non-node "d" items here aren't the right ones, for some reason...
             // so getDescendantForData finds the most updated "d" (shouldn't be necessary)
             d = this.getDescendantForData(d.data);
-            this.lastToggledNode = d;
-            if (d3.event.defaultPrevented) return; // ignore drag
-            this.branchToggle(d);
-            this.pathUpdate(this.root);
-            if (base.isHierarchyNodeMaximized(d)) {
-              if (base.options.content == "current") {
-                setTimeout(function() { base.loadNode(d.data.node.slug, false, 2); }, 500);
+            if (d.data.children) {
+              this.lastToggledNode = d;
+              if (d3.event.defaultPrevented) return; // ignore drag
+              this.branchToggle(d);
+              this.pathUpdate(this.root);
+              if (base.isHierarchyNodeMaximized(d)) {
+                if (base.options.content == "current") {
+                  setTimeout(function() { base.loadNode(d.data.node.slug, false, 2, base.updateInspector); }, 500);
+                }
               }
             }
+            var index;
+            index = base.selectedNodes.indexOf(d.data.node);
+            if (index == -1) {
+              base.selectedNodes = [d.data.node];
+            } else {
+              base.selectedNodes = [];
+            }
+            base.updateInspector();
           });
 
         nodeEnter.append("svg:text")
@@ -2691,7 +2965,7 @@ window.scalarvis = { instanceCount: -1 };
 
         nodeUpdate.selectAll("circle")
           .attr("r", 8)
-          .style("fill", function(d) { return !d.children && d._children ? d3.hsl(base.highlightColorScale(d.data.type, "noun", '#777')).brighter(1.5) : "#fff"; });
+          .style("fill", (d) => { d = this.getDescendantForData(d.data); return !d.children && d._children ? d3.hsl(base.highlightColorScale(d.data.type, "noun", '#777')).brighter(1.5) : "#fff"; });
 
         nodeUpdate.selectAll("text")
           .style("fill-opacity", 1);
@@ -2793,7 +3067,7 @@ window.scalarvis = { instanceCount: -1 };
         this.rollover = $('<div class="rollover caption_font">Test</div>').appendTo(base.visualization);
         base.visualization.on('mousemove', (e) => {
           this.rollover.css('left', (e.pageX - $(base.visualization).offset().left + parseInt($(base.visualization).parent().parent().css('padding-left')) + 10) + 'px');
-          this.rollover.css('top', (e.pageY - $(base.visualization).parent().parent().offset().top) + 15 + 'px');
+          this.rollover.css('top', (e.pageY - $(base.visualization).parent().offset().top) + 15 + 'px');
         })
 
         if (base.svg != null) {
@@ -2803,6 +3077,8 @@ window.scalarvis = { instanceCount: -1 };
           this.size.width < this.size.height ? this.r -= 120 : this.r -= 60;
           var radiusMod = 1.55;
           this.textRadiusOffset = 10;
+
+          this.updateNoResultsMessage(base.sortedNodes);
 
           // arc generator
           this.arcs = d3.arc()
@@ -2954,7 +3230,7 @@ window.scalarvis = { instanceCount: -1 };
 
       setupElement() {
         base.visualization.empty();
-        base.visualization.removeClass('bounded');
+        base.visualization.addClass('bounded');
         base.svg = d3.select(base.visualization[0]).append('svg:svg')
           .attr('width', this.size.width)
           .attr('height', this.size.height);
@@ -3025,20 +3301,22 @@ window.scalarvis = { instanceCount: -1 };
 
       toggleNodeSelected(d) {
         var index;
-        index = base.selectedNodes.indexOf(d.data);
+        index = base.selectedNodes.indexOf(d.data.node);
         if (index == -1) {
-          base.selectedNodes.push(d.data);
-          index = base.selectedHierarchyNodes.indexOf(d.data);
+          base.selectedNodes.push(d.data.node);
+          index = base.selectedHierarchyNodes.indexOf(d.data.node);
           if (index == -1) {
-            base.selectedHierarchyNodes.push(d.data);
+            base.selectedHierarchyNodes.push(d.data.node);
           }
+          base.loadNode(d.data.node.slug, 0, 0, base.updateInspector);
         } else {
           base.selectedNodes.splice(index, 1);
-          index = base.selectedHierarchyNodes.indexOf(d.data);
+          index = base.selectedHierarchyNodes.indexOf(d.data.node);
           if (index != -1) {
             base.selectedHierarchyNodes.splice(index, 1);
           }
         }
+        base.updateInspector();
         this.updateSelectedLabels();
         this.updateHighlights(d);
       }
@@ -3054,7 +3332,7 @@ window.scalarvis = { instanceCount: -1 };
         var n = descendants.length;
         for (var i=0; i<n; i++) {
           descendant = descendants[i];
-          index = base.selectedHierarchyNodes.indexOf(descendant.data);
+          index = base.selectedHierarchyNodes.indexOf(descendant.data.node);
           if (index != -1) {
             this.selectedHierarchyNodes.push(descendant);
           }
@@ -3132,12 +3410,16 @@ window.scalarvis = { instanceCount: -1 };
       updateHighlights(d) {
 
         // show the rollover label if this item has no children, i.e. is a single content item, not a parent
-        if (this.highlightedNode && d.data.showsTitle) {
-          this.rollover.html(d.data.title);
-          this.rollover.css('display', 'block');
+        let rolloverVisible = false;
+        if (d != null) {
+          if (this.highlightedNode && d.data.showsTitle) {
+            this.rollover.html(d.data.title);
+            this.rollover.css('display', 'block');
+            rolloverVisible = true;
+          }
+        }
 
-          // otherwise, hide the rollover label
-        } else {
+        if (!rolloverVisible) {
           this.rollover.css('display', 'none');
         }
 
@@ -3439,6 +3721,8 @@ window.scalarvis = { instanceCount: -1 };
           this.forceLink.links(base.links);
           base.force.nodes(base.abstractedSortedNodes).alpha(.3);
 
+          this.updateNoResultsMessage(base.abstractedSortedNodes);
+
           this.container = base.svg.selectAll('g.container');
 
           this.linkSelection = this.container.selectAll('.link')
@@ -3458,8 +3742,8 @@ window.scalarvis = { instanceCount: -1 };
 
           var nodeEnter = this.nodeSelection.enter().append('svg:g')
             .attr('class', 'node')
-            .attr('x', (d) => { d.x = this.size.width * .5; return d.x; })
-            .attr('y', (d) => { d.y = this.size.height * .5; return d.y; })
+            .attr('x', (d) => { d.x = this.size.width * .5 + (Math.random() * 200 - 100); return d.x; })
+            .attr('y', (d) => { d.y = this.size.height * .5 + (Math.random() * 200 - 100); return d.y; })
             .call(this.dragHandling(base.force))
             .on('touchstart', function(d) { d3.event.stopPropagation(); })
             .on('mousedown', function(d) { d3.event.stopPropagation(); })
@@ -3470,13 +3754,14 @@ window.scalarvis = { instanceCount: -1 };
               if (index == -1) {
                 base.selectedNodes.push(d.node);
                 if (base.options.content == "current" || base.options.content == "lens") {
-                  base.loadNode(d.node.slug, false);
+                  base.loadNode(d.node.slug, false, 0, base.updateInspector);
                 }
               } else {
                 base.selectedNodes.splice(index, 1);
                 base.filter();
                 base.draw();
               }
+              base.updateInspector();
               this.updateGraph();
             })
             .on("mouseover", (d) => {
@@ -3551,7 +3836,6 @@ window.scalarvis = { instanceCount: -1 };
         base.visualization.empty();
         base.visualization.addClass('bounded');
         base.visualization.css('height', this.size.height + 'px');
-        base.visualization.css('width', this.size.width + 'px');
         base.visualization.css('padding', '0px');
         base.svg = d3.select(base.visualization[0]).append('svg:svg')
           .attr('width', this.size.width)
@@ -3563,13 +3847,11 @@ window.scalarvis = { instanceCount: -1 };
         // once we upgrade to D3 4.0, we should implement custom x and y accessors
         // so multiple instances don't try to change each other's positions
 
-        this.forceLink = d3.forceLink().distance(100);
+        this.forceLink = d3.forceLink().distance(120);
 
         base.force = d3.forceSimulation()
           .force('link', this.forceLink)
-          .alphaDecay(.01)
-          .force('collide', d3.forceCollide(30))
-          .force('charge', d3.forceManyBody().strength(-40))
+          .force('charge', d3.forceManyBody().strength(-200))
           .force('center', d3.forceCenter(this.size.width * .5, this.size.height * .5))
           .on('tick', () => {
             if (base.svg != null) {
@@ -3613,7 +3895,7 @@ window.scalarvis = { instanceCount: -1 };
         }
 
         function dragEnded(d) {
-          if (!d3.event.active) base.force.alphaTarget(0);
+          if (!d3.event.active) base.force.alphaTarget(0.01);
           d.fx = null;
           d.fy = null;
         }
@@ -3708,71 +3990,70 @@ window.scalarvis = { instanceCount: -1 };
       draw() {
         super.draw();
 
-    	if (null == this.map) return;
-    	console.log(base.sortedNodes);
+      	if (null == this.map) return;
 
-    	this.clearMarkers();
-    	var bounds = new google.maps.LatLngBounds();
-    	var urls = [];
-    	// Contents of paths connected by lines
-    	for (var j = 0; j < base.sortedNodes.length; j++) {
-    		if ('undefined' == typeof(base.sortedNodes[j].scalarTypes.path)) continue;
-    		var pathTitle = base.sortedNodes[j].getDisplayTitle();
-    		var pathCoordinates = [];
-    		for (var k = 0; k < base.sortedNodes[j].outgoingRelations.length; k++) {
-    			if (null == base.sortedNodes[j].outgoingRelations[k].index) continue;  // Not part of the path
-    			if (null == base.sortedNodes[j].outgoingRelations[k].target) continue;  // Not part of the path
-    			if (-1 == urls.indexOf(base.sortedNodes[j].outgoingRelations[k].target.url)) urls.push(base.sortedNodes[j].outgoingRelations[k].target.url);
-    			var title = '<p style="margin-bottom:8px;">'+base.sortedNodes[j].outgoingRelations[k].startString+' of the "'+pathTitle+'" path<br /><b><a href="'+base.sortedNodes[j].outgoingRelations[k].target.url+'">'+base.sortedNodes[j].outgoingRelations[k].target.getDisplayTitle()+'</a></b></p>';
-    			var thumbnail = base.sortedNodes[j].outgoingRelations[k].target.thumbnail;
-    			var description = base.sortedNodes[j].outgoingRelations[k].target.getDescription(true);
-    			if (null != thumbnail) title += '<img src="'+thumbnail+'" align="left" style="max-width:100px;max-height:100px;margin-right:12px;" />';
-    			if (description && description.length) title += '<p style="margin-bottom:8px;">'+description+'</p>';
-    			var icon = this.getIcon(base.sortedNodes[j].outgoingRelations[k].target.scalarTypes);
-    			var coords = this.drawMarkers(base.sortedNodes[j].outgoingRelations[k].target, title, icon);
-    	        if (coords.length) {
-    	        	for (var m = 0; m < coords.length; m++) {
-    	        		pathCoordinates.push(coords[m]);
-    	        		bounds.extend( new google.maps.LatLng(coords[m].lat, coords[m].lng) );
-    	        	};
-    	        }
-    		}
-    		var path_key = this.paths.length;
-            this.paths[path_key] = new google.maps.Polyline({
-                path: pathCoordinates,
-                geodesic: true,
-                strokeColor: '#0000FF',
-                strokeOpacity: 1.0,
-                strokeWeight: 2
-            });
-            this.paths[path_key].setMap(this.map);
-    	}
-    	// All other nodes
-    	for (var j = 0; j < base.sortedNodes.length; j++) {
-    		if (-1 != urls.indexOf(base.sortedNodes[j].url)) continue;
-    		var title = '<p style="margin-bottom:8px;"><b><a href="'+base.sortedNodes[j].url+'">'+base.sortedNodes[j].getDisplayTitle()+'</a></b></p>';
-			var thumbnail = base.sortedNodes[j].thumbnail;
-			var description = base.sortedNodes[j].getDescription(true);
-			if (null != thumbnail) title += '<img src="'+thumbnail+'" align="left" style="max-width:100px;max-height:100px;margin-right:12px;" />';
-			if (description && description.length) title += '<p style="margin-bottom:8px;">'+description+'</p>';
-        	var icon = this.getIcon(base.sortedNodes[j].scalarTypes);
-    		var coords = this.drawMarkers(base.sortedNodes[j], title, icon);
-    	    if (coords.length) {
-	        	for (var m = 0; m < coords.length; m++) {
-	        		bounds.extend( new google.maps.LatLng(coords[m].lat, coords[m].lng) );
-	        	};
-    	    }
-    	}
-    	this.map.fitBounds(bounds);
-    	if (!this.markers.length) {
-    		this.displayNoContentWarning();
-    	} else {
-    		this.removeNoContentWarning();
-    	}
+      	this.clearMarkers();
+      	var bounds = new google.maps.LatLngBounds();
+      	var urls = [];
+      	// Contents of paths connected by lines
+      	for (var j = 0; j < base.sortedNodes.length; j++) {
+      		if ('undefined' == typeof(base.sortedNodes[j].scalarTypes.path)) continue;
+      		var pathTitle = base.sortedNodes[j].getDisplayTitle();
+      		var pathCoordinates = [];
+      		for (var k = 0; k < base.sortedNodes[j].outgoingRelations.length; k++) {
+      			if (null == base.sortedNodes[j].outgoingRelations[k].index) continue;  // Not part of the path
+      			if (null == base.sortedNodes[j].outgoingRelations[k].target) continue;  // Not part of the path
+      			if (-1 == urls.indexOf(base.sortedNodes[j].outgoingRelations[k].target.url)) urls.push(base.sortedNodes[j].outgoingRelations[k].target.url);
+      			var title = '<p style="margin-bottom:8px;">'+base.sortedNodes[j].outgoingRelations[k].startString+' of the "'+pathTitle+'" path<br /><b><a href="'+base.sortedNodes[j].outgoingRelations[k].target.url+'">'+base.sortedNodes[j].outgoingRelations[k].target.getDisplayTitle()+'</a></b></p>';
+      			var thumbnail = base.sortedNodes[j].outgoingRelations[k].target.thumbnail;
+      			var description = base.sortedNodes[j].outgoingRelations[k].target.getDescription(true);
+      			if (null != thumbnail) title += '<img src="'+thumbnail+'" align="left" style="max-width:100px;max-height:100px;margin-right:12px;" />';
+      			if (description && description.length) title += '<p style="margin-bottom:8px;">'+description+'</p>';
+      			var icon = this.getIcon(base.sortedNodes[j].outgoingRelations[k].target.scalarTypes);
+      			var coords = this.drawMarkers(base.sortedNodes[j].outgoingRelations[k].target, title, icon);
+      	        if (coords.length) {
+      	        	for (var m = 0; m < coords.length; m++) {
+      	        		pathCoordinates.push(coords[m]);
+      	        		bounds.extend( new google.maps.LatLng(coords[m].lat, coords[m].lng) );
+      	        	};
+      	        }
+      		}
+      		var path_key = this.paths.length;
+              this.paths[path_key] = new google.maps.Polyline({
+                  path: pathCoordinates,
+                  geodesic: true,
+                  strokeColor: '#0000FF',
+                  strokeOpacity: 1.0,
+                  strokeWeight: 2
+              });
+              this.paths[path_key].setMap(this.map);
+      	}
+      	// All other nodes
+      	for (var j = 0; j < base.sortedNodes.length; j++) {
+      		if (-1 != urls.indexOf(base.sortedNodes[j].url)) continue;
+      		var title = '<p style="margin-bottom:8px;"><b><a href="'+base.sortedNodes[j].url+'">'+base.sortedNodes[j].getDisplayTitle()+'</a></b></p>';
+  			var thumbnail = base.sortedNodes[j].thumbnail;
+  			var description = base.sortedNodes[j].getDescription(true);
+  			if (null != thumbnail) title += '<img src="'+thumbnail+'" align="left" style="max-width:100px;max-height:100px;margin-right:12px;" />';
+  			if (description && description.length) title += '<p style="margin-bottom:8px;">'+description+'</p>';
+          	var icon = this.getIcon(base.sortedNodes[j].scalarTypes);
+      		var coords = this.drawMarkers(base.sortedNodes[j], title, icon);
+      	    if (coords.length) {
+  	        	for (var m = 0; m < coords.length; m++) {
+  	        		bounds.extend( new google.maps.LatLng(coords[m].lat, coords[m].lng) );
+  	        	};
+      	    }
+      	}
+      	this.map.fitBounds(bounds);
+      	if (!this.markers.length) {
+      		this.displayNoContentWarning();
+      	} else {
+      		this.removeNoContentWarning();
+      	}
       }
 
       getHelpContent() {
-        return "The map will display any chosen content that contains geospatial metadata (e.g., dcterms:spatial). In the event that pages are part of a path, route lines will be drawn between each page."; // see other vis classes for examples
+        return "This visualization will display any selected content that contains geospatial metadata (dcterms:coverage, dcterms:spatial). In the event that pages are part of a path, route lines will be drawn between each page.";
       }
 
       // one-time visualization setup
@@ -3798,7 +4079,7 @@ window.scalarvis = { instanceCount: -1 };
        	});
     	this.oms = new OverlappingMarkerSpiderfier(this.map, {  // https://github.com/jawj/OverlappingMarkerSpiderfier
     		  markersWontMove: true,
-    		  markersWontHide: true,
+    		  markersWontHide: false,
     		  basicFormatEvents: true,
     		  keepSpiderfied: true
     		});
@@ -3809,7 +4090,7 @@ window.scalarvis = { instanceCount: -1 };
 
     	  base.visualization.find('.no-content-warning').remove();
     	  var $el = $('<div class="no-content-warning" style="position:absolute; z-index:999; top:0px; left:0px; right:0px; bottom:0px; text-align:center; color:#000000;"></div>').appendTo(base.visualization);
-    	  var $inner = $('<div style="background-color:rgba(255, 255, 255, 0.5); margin-top:100px; padding:30px 0px 30px 0px;">There is no geospatial metadata associated with the selected items.<br /><br /><button type="button" class="btn btn-primary btn-sm">Dismiss</button></div>').appendTo($el);
+    	  var $inner = $('<div style="background-color:rgba(255, 255, 255, 0.5); margin-top:100px; padding:30px 0px 30px 0px;">Either no items were returned, or no geospatial<br/>metadata could be found on the returned items.<br /><br /><button type="button" class="btn btn-primary btn-sm">Dismiss</button></div>').appendTo($el);
     	  $inner.find('button').on('click', function() {
     		  $(this).parent().remove();
     	  });
@@ -3831,13 +4112,13 @@ window.scalarvis = { instanceCount: -1 };
       }
 
       drawMarkers(obj, title, icon) {
-    	  	var coords = this.getCoords(obj);
-			if (!coords.length) return false;
-			for (var j = 0; j < coords.length; j++) {
-				var coord = coords[j];
-				// Marker
-				var key = this.markers.length;
-				this.markers[key] = new google.maps.Marker({
+  	  	var coords = this.getCoords(obj);
+  			if (!coords.length) return false;
+  			for (var j = 0; j < coords.length; j++) {
+  				var coord = coords[j];
+  				// Marker
+  				var key = this.markers.length;
+  				this.markers[key] = new google.maps.Marker({
 		    		position: coord,
 		    		/* map: this.map, */
 		    		title: title,
@@ -3845,20 +4126,25 @@ window.scalarvis = { instanceCount: -1 };
 		    			url: icon
 		    		}
 		    	});
-				this.oms.addMarker(this.markers[key]);
-				// Infowindow
-		        this.infowindows[key] = new google.maps.InfoWindow({
-		            content: title,
-		            maxWidth: 300
-		        });
-		        $(this.markers[key]).data('infowindow', this.infowindows[key]).data('map', this.map);
-		        this.markers[key].addListener('spider_click', function(evt) {
-		        	var infowindow = $(this).data('infowindow');
-		        	var map = $(this).data('map');
-		        	infowindow.open(map, this);
-		        });
-			};
-	        return coords;
+  				this.oms.addMarker(this.markers[key]);
+  				// Infowindow
+	        this.infowindows[key] = new google.maps.InfoWindow({
+	            content: title,
+	            maxWidth: 300
+	        });
+	        $(this.markers[key]).data('infowindow', this.infowindows[key]).data('map', this.map);
+          this.markers[key].addListener('click', (evt) => {
+            base.selectedNodes = [obj];
+            base.loadNode(obj.slug, 0, 0, base.updateInspector, false);
+            base.updateInspector();
+          })
+	        this.markers[key].addListener('spider_click', function(evt) {
+	        	var infowindow = $(this).data('infowindow');
+	        	var map = $(this).data('map');
+	        	infowindow.open(map, this);
+	        });
+  			};
+        return coords;
       }
 
       getCoords(obj) {
@@ -3916,6 +4202,7 @@ window.scalarvis = { instanceCount: -1 };
       constructor() {
         super();
         this.words = [];
+        this.isDrawing = false;
         this.stopwords = ['a', 'about', 'above', 'across', 'after', 'afterwards']  // https://programminghistorian.org/en/lessons/counting-frequencies
         this.stopwords += ['again', 'against', 'all', 'almost', 'alone', 'along']
         this.stopwords += ['already', 'also', 'although', 'always', 'am', 'among']
@@ -3959,7 +4246,7 @@ window.scalarvis = { instanceCount: -1 };
         this.stopwords += ['thick', 'thin', 'third', 'this', 'those', 'though', 'three']
         this.stopwords += ['three', 'through', 'throughout', 'thru', 'thus', 'to']
         this.stopwords += ['together', 'too', 'top', 'toward', 'towards', 'twelve']
-        this. stopwords += ['twenty', 'two', 'un', 'under', 'until', 'up', 'upon']
+        this.stopwords += ['twenty', 'two', 'un', 'under', 'until', 'up', 'upon']
         this.stopwords += ['us', 'very', 'via', 'was', 'we', 'well', 'were', 'what']
         this.stopwords += ['whatever', 'when', 'whence', 'whenever', 'where']
         this.stopwords += ['whereafter', 'whereas', 'whereby', 'wherein', 'whereupon']
@@ -3971,28 +4258,29 @@ window.scalarvis = { instanceCount: -1 };
       }
 
       draw() {
+      if (this.isDrawing) return;
+      this.isDrawing = true;
         super.draw();
+        if ('undefined' == typeof($.fn.jQCloud)) {
+          var approot = $('link#approot').attr('href');
+          $('head').append('<link rel="stylesheet" type="text/css" href="' + approot + 'views/melons/cantaloupe/css/vis.css">');
+          $('head').append('<link rel="stylesheet" type="text/css" href="' + approot + 'views/widgets/jQCloud/jqcloud.min.css">');
+          $.getScript(approot + 'views/widgets/jQCloud/jqcloud.min.js', () => {
+            base.visualization.addClass("tag_cloud caption_font");
+            this.drawWordCloud();
+          });
+        } else {
+          this.drawWordCloud();
+        }
       }
 
       getHelpContent() {
-        return "The Word Cloud displays the most commonly used words across main text content of the selected items. For example, if the word \"scholarship\" is present in the main text content of ten pages it will be displayed in the cloud larger than another word that is present in the text content of only five pages."; // see other vis classes for examples
+        return "This visualization shows the most commonly used words across the main text content of the selected items. For example, if the word \"scholarship\" is present in the main text content of ten pages it will be displayed larger than another word that is present in the text content of only five pages.";
       }
 
       // one-time visualization setup
       setupElement() {
         this.hasBeenDrawn = true;
-        base.visualization.empty(); // empty the element where this vis is to be shown
-        if ('undefined' == typeof($.fn.jQCloud)) {
-	        var approot = $('link#approot').attr('href');
-	        $('head').append('<link rel="stylesheet" type="text/css" href="' + approot + 'views/melons/cantaloupe/css/vis.css">');
-	        $('head').append('<link rel="stylesheet" type="text/css" href="' + approot + 'views/widgets/jQCloud/jqcloud.min.css">');
-	        $.getScript(approot + 'views/widgets/jQCloud/jqcloud.min.js', () => {
-	        	base.visualization.addClass("tag_cloud caption_font");
-	        	this.drawWordCloud();
-	        });
-        } else {
-        	this.drawWordCloud();
-        }
       }
 
       drawWordCloud() {
@@ -4000,61 +4288,81 @@ window.scalarvis = { instanceCount: -1 };
           base.visualization.css('height', this.size.height + 'px');
           //base.visualization.css('width', this.size.width + 'px');
           if ('undefined' != typeof(base.visualization.jQCloud)) base.visualization.jQCloud('destroy');
-          base.visualization.empty();
-      	  // Create array of words
-          for (var j = 0; j < base.sortedNodes.length; j++) {
-          	var words = this.getWords(base.sortedNodes[j].current.content);
-          	this.words = this.mergeWords(this.words, words);
-          };
+          base.visualization.html('<div>Parsing data...</div>');
+          // Create array of words
+          var j = 0;
+        setTimeout( () => {
+          this.doDrawWordCloud(j, base.sortedNodes.length - 1);
+        }, 1);
+
+      }
+
+      doDrawWordCloud(j, total) {
+        var words = this.getWords(base.sortedNodes[j].current.content);
+        this.words = this.mergeWords(this.words, words);
+        if (j >= total) {
+          this.finishDrawWordCloud();
+          return;
+        };
+        setTimeout( () => {
+          this.doDrawWordCloud((j+1), total);
+        }, 1);
+
+      }
+
+      finishDrawWordCloud() {
+
           base.visualization.empty();
           // Render cloud
           base.visualization.jQCloud(this.words, {
-          	afterCloudRender: function() {
-          		removeOverflowing: false
-          	}
+            afterCloudRender: function() {
+              removeOverflowing: false
+            }
           });
+          this.updateNoResultsMessage(base.sortedNodes);
+          this.isDrawing = false;
 
       }
 
       getWords(content) {
 
-    	  if (!content) return [];
-    	  content = content.replace(/(<([^>]+)>)/ig," ");  // Strip tags
-    	  content = content.replace(/&nbsp;/g,' ');  // Non-breaking space to space
-    	  content = $('<textarea />').html(content).text();  // HTML entity decode
-    	  var words = content.split(' ');
-    	  return words;
+        if (!content) return [];
+        content = content.replace(/(<([^>]+)>)/ig," ");  // Strip tags
+        content = content.replace(/&nbsp;/g,' ');  // Non-breaking space to space
+        content = $('<textarea />').html(content).text();  // HTML entity decode
+        var words = content.split(' ');
+        return words;
 
       }
 
       mergeWords(arr1, arr2) {
 
-    	  for (var j = 0; j < arr2.length; j++) {
-    		  if (!arr2[j].length) continue;
-    		  var word = arr2[j].replace(/[^0-9a-zA-Z-]/g, '');
-    		  if (word.length < 3) continue;  // Remove empty or short
-    		  if (this.isAStopWord(word)) continue;  // Remove stop words
-    		  if (!isNaN(word) && word.length != 4) continue;  // Remove numbers if not a year
-    		  var wordIncluded = false;
-    		  for (var k = 0; k < arr1.length; k++) {
-    			  if (arr1[k].text.toLowerCase() == word.toLowerCase()) {
-    				  arr1[k].weight = arr1[k].weight + 1;
-    				  wordIncluded = true;
-    			  }
-    		  }
-    		  if (!wordIncluded) {
-    			  arr1.push({text:word, weight:1});
-    		  }
-    	  }
-    	  return arr1;
+        for (var j = 0; j < arr2.length; j++) {
+          if (!arr2[j].length) continue;
+          var word = arr2[j].replace(/[^0-9a-zA-Z-]/g, '');
+          if (word.length < 3) continue;  // Remove empty or short
+          if (this.isAStopWord(word)) continue;  // Remove stop words
+          if (!isNaN(word) && word.length != 4) continue;  // Remove numbers if not a year
+          var wordIncluded = false;
+          for (var k = 0; k < arr1.length; k++) {
+            if (arr1[k].text.toLowerCase() == word.toLowerCase()) {
+              arr1[k].weight = arr1[k].weight + 1;
+              wordIncluded = true;
+            }
+          }
+          if (!wordIncluded) {
+            arr1.push({text:word, weight:1});
+          }
+        }
+        return arr1;
 
       }
 
       isAStopWord(word) {
 
-    	  if (word.substr(0, 1) == '&') return true;
-    	  if (this.stopwords.indexOf(word.toLowerCase()) != -1) return true;
-    	  false;
+        if (word.substr(0, 1) == '&') return true;
+        if (this.stopwords.indexOf(word.toLowerCase()) != -1) return true;
+        false;
 
       }
     }
@@ -4066,29 +4374,157 @@ window.scalarvis = { instanceCount: -1 };
 
       constructor() {
         super();
-        // init any special properties needed for this visualization here
+        this.visList = null;
       }
 
       draw() {
-        // this updates the dimensions of the vis based on window size, etc.
-        // and calls setupElement if the vis was just created
         super.draw();
 
-        // add additional code here to render the vis
-        // base.hierarchy is an object containing a hierarchy of known nodes, organized by type
-        // base.sortedNodes is an array of all known nodes
+        this.updateNoResultsMessage(base.contentNodes);
+
+        // Determine if there is a author/creator field to add based on metadata
+        var candidates = {
+        		"http://ns.exiftool.ca/IPTC/IPTC/1.0/By-line": "iptc:By-line",
+        		"http://ns.exiftool.ca/IPTC/IPTC/1.0/Writer-Editor": "iptc:Writer-Editor",
+        		"http://purl.org/dc/terms/creator": "dcterms:creator"
+        }
+        var counts = {};
+        for (var j = 0; j < base.contentNodes.length; j++) {
+        	for (var uri in candidates) {
+        		if ('undefined' != typeof(base.contentNodes[j].current.properties[uri])) {
+        			if ('undefined' == typeof(counts[uri])) counts[uri] = 0;
+        			counts[uri]++;
+        		}
+        	}
+        };
+        var fieldValue = 0;
+        var fieldToAdd = null;
+        for (var field in counts) {
+        	if (counts[field] > 0 && counts[field] > fieldValue) {
+        		fieldValue = counts[field];
+        		fieldToAdd = field;
+        	}
+        };
+        if (null != fieldToAdd && !this.visList.find('td[prop="fieldToAdd"]').length) {
+        	this.visList.find('td[prop="author"]').before('<td class="lg" prop="fieldToAdd"><a href="javascript:void(null);">'+candidates[fieldToAdd]+'</a></td>');
+        };
+
+        // Output rows
+        var $tbody = this.visList.find('tbody');
+        $tbody.find('.visListRow').remove();
+        var maxLength = 100;
+        var authorFields = {};
+        for (var j = 0; j < base.contentNodes.length; j++) {
+        	var url = base.contentNodes[j].url;
+        	var title = base.contentNodes[j].current.title;
+        	if (null===title) continue;
+        	title = title.replace(/(<([^>]+)>)/gi, "");
+          	var description = ('undefined'!=typeof(base.contentNodes[j].current.description) && null!==base.contentNodes[j].current.description) ? base.contentNodes[j].current.description : '';
+          	if (description.length > maxLength) description = description.substr(0, maxLength) + '...';
+          	description = description.replace(/(<([^>]+)>)/gi, "");
+          	var content = ('undefined'!=typeof(base.contentNodes[j].current.content) && null!==base.contentNodes[j].current.content) ? base.contentNodes[j].current.content : '';
+          	if (content.length > maxLength) content = content.substr(0, maxLength) + '...';
+          	content = content.replace(/(<([^>]+)>)/gi, "");
+          	var author = base.contentNodes[j].current.author;  // Most recent version
+          	var authorUrl = $('link#parent').attr('href') + author ;
+          	var authorId = parseInt(authorUrl.substr(authorUrl.lastIndexOf('/')+1));
+          	var fullname = ('undefined' != typeof(base.options.lens) && 'undefined' != typeof(base.options.lens.users[authorId])) ? base.options.lens.users[authorId] : '';
+          	var lastEdited = (base.contentNodes[j].current.created) ? base.contentNodes[j].current.created.substr(0, base.contentNodes[j].current.created.indexOf('T')) : '';
+          	var versions = base.contentNodes[j].current.number;
+          	var isSelected = (base.selectedNodes.indexOf(base.contentNodes[j]) != -1) ? true : false;
+          	var $row = $('<tr class="visListRow '+((isSelected)?'selected':'')+'" data-index="'+j+'"></div>').appendTo($tbody);
+          	$row.append('<td class="sm" prop="title"><a href="'+url+'" target="_blank">'+title+'</a></td>');
+          	$row.append('<td class="md" prop="description">'+description+'</td>');
+          	$row.append('<td class="md" prop="content">'+content+'</td>');
+          	if (null != fieldToAdd) {
+          		var valueToAdd = ('undefined'!=typeof(base.contentNodes[j].current.properties[fieldToAdd])) ? base.contentNodes[j].current.properties[fieldToAdd][0].value : '';
+          		$row.append('<td class="lg" prop="fieldToAdd">'+valueToAdd+'</td>');
+          	};
+          	$row.append('<td class="lg" prop="author"><a href="'+authorUrl+'" target="_blank">'+fullname+'</a></td>');
+          	$row.append('<td class="lg" prop="lastEdited">'+lastEdited+'</td>');
+          	$row.append('<td class="lg" prop="version" style="text-align:center;">'+versions+'</td>');
+          };
+
+          // Add/remove items from selectedNodes
+          this.visList.find('.visListRow').on('click', function() {
+        	 var $this = $(this);
+        	 var isSelected = $this.hasClass('selected') ? true : false;
+        	 var index = parseInt($this.data('index'));
+        	 var node = base.contentNodes[index];
+        	 if (isSelected) {
+        		 var match = base.selectedNodes.indexOf(node);
+        		 base.selectedNodes.splice(match, 1);
+        		 $this.removeClass('selected');
+        	 } else {
+	        	 base.selectedNodes.push(node);
+	        	 $this.addClass('selected');
+        	 };
+           base.loadNode(node.slug, 0, 0, base.updateInspector);
+  	       base.updateInspector();
+          });
+
+          // Add/remove columns based on size of parent area
+          var width = parseInt(this.visList.parent().width());
+          if (width < 400) {  // sm
+        	  this.visList.find('.sm').show();
+        	  this.visList.find('.md, .lg').hide();
+          } else if (width < 600) {  // md
+        	  this.visList.find('.sm, .md').show();
+        	  this.visList.find('.lg').hide();
+          } else {  // lg
+        	  this.visList.find('.sm, .md, .lg').show();
+          };
+
       }
 
       getHelpContent() {
-        return "Some info about this visualization"; // see other vis classes for examples
+        var helpContent;
+        helpContent = "This visualization shows a list of content in this work.<ul>";
+        helpContent += "<li>Each row represents one piece of content.</li>" +
+          "<li>You can re-sort the list by clicking the headers.</li>" +
+          "<li>Click the title of any item to navigate to it.</li>";
+        return helpContent;
       }
 
       // one-time visualization setup
       setupElement() {
+
         this.hasBeenDrawn = true;
         base.visualization.empty(); // empty the element where this vis is to be shown
-        base.visualization.append('List visualization');
+        base.visualization.css('height', this.size.height + 'px');
+        var approot = $('link#approot').attr('href');
+        var css = approot + 'views/melons/cantaloupe/css/vis.css';
+        if (!$('head').find('[href="'+css+'"]').length) $('head').append('<link rel="stylesheet" type="text/css" href="' + css + '">');
+        var $overflow = $('<div style="overflow:auto;"></div>').appendTo(base.visualization);
+        $overflow.height($overflow.parent().height());
+        this.visList = $('<table class="visList"></table>').appendTo($overflow);
+        var $tbody = this.visList.append('<tbody></tbody>');
+        var $header = $('<tr class="header"></tr>').appendTo($tbody);
+        $header.append('<td class="sm" prop="title"><a href="javascript:void(null);">Title</a></td>');
+        $header.append('<td class="md" prop="description"><a href="javascript:void(null);">Description</a></td>');
+        $header.append('<td class="md" prop="content"><a href="javascript:void(null);">Content</a></td>');
+        $header.append('<td class="lg" prop="author"><a href="javascript:void(null);">Last Edited By</a></td>');
+        $header.append('<td class="lg" prop="lastEdited"><a href="javascript:void(null);">Date Edited</a></td>');
+        $header.append('<td class="lg" prop="version"><a href="javascript:void(null);">Version</a></td>');
+        $header.on('click', 'a', function() {
+        	var $this = $(this);
+        	var index = $header.find('a').index($this);
+        	if ($header.data('sortBy') != index) {
+        		$header.data('sortBy', index);
+        		$header.data('sortDir', 'asc');
+        	} else {
+        		$header.data('sortDir', (($header.data('sortDir')=='asc')?'desc':'asc'));
+        	}
+        	$tbody.find('tr:not(.header)').sort(function(a, b) {
+                if ($header.data('sortDir') == 'asc') {
+                    return $('td:eq('+$header.data('sortBy')+')', a).text().localeCompare($('td:eq('+$header.data('sortBy')+')', b).text());
+                } else {
+                    return $('td:eq('+$header.data('sortBy')+')', b).text().localeCompare($('td:eq('+$header.data('sortBy')+')', a).text());
+                }
+            }).appendTo($tbody);
+        });
       }
+
     }
 
     base.init();
@@ -4100,7 +4536,8 @@ window.scalarvis = { instanceCount: -1 };
     relations: 'all',
     format: 'grid',
     modal: false,
-    widget: false
+    widget: false,
+    caption: null
   };
 
   $.fn.scalarvis = function(options) {
