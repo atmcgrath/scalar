@@ -13,8 +13,8 @@ $this->template->add_js('system/application/views/arbors/admin/jquery-3.4.1.min.
 <div class="system_wrapper">
 <div class="content">
 <div class="login_wrapper">
-<? if (!empty($authenticator_error)): ?>
-<div class="error"><?=$authenticator_error?></div>
+<? if (!empty($login_error)): ?>
+<div class="error"><?=$login_error?></div>
 <? endif ?>
 	<form action="<?=confirm_slash(base_url())?>system/authenticator" method="post" class="panel">
 		<input type="hidden" name="action" value="do_authenticator" />
@@ -27,6 +27,11 @@ $this->template->add_js('system/application/views/arbors/admin/jquery-3.4.1.min.
 			</tr>
 			<tr>
 				<td class="field">Code</td><td class="value"><input type="text" name="code" value="" class="input_text" autofocus /></td>
+			</tr>
+			<tr>
+				<td class="field">&nbsp;</td><td class="value">
+					<label><input type="checkbox" name="trust_browser" value="1" style="position:relative;top:2px;" /> Trust this browser</label>
+				</td>
 			</tr>
 			<tr>
 				<td></td>

@@ -373,7 +373,7 @@
                 }
 
                 if($(mediaelement.link).hasClass('wrap')){
-                    if(typeof infoElement != 'undefined'){
+                    if( typeof infoElement != 'undefined' && !isFullWidth){
                         infoElement.addClass('wrapped');
                     }
                     if(isFullWidth){
@@ -740,6 +740,8 @@
                         contextMarkup += '<p class="citation">Tagged by <a href="' + relation.body.url + '">&ldquo;' + relation.body.getDisplayTitle() + '&rdquo;</a></p>';
                     }
 
+                    contextMarkup += '<p><a id="visualize-this-link" href="javascript:;" class="btn btn-default btn-xs">Visualize...</a></p>';
+
                     $(".path-nav.info").remove();
                     if (contextMarkup != '') {
                         contextMarkup = '<div class="citations">' + contextMarkup + '</div>';
@@ -751,10 +753,46 @@
                             trigger: "click",
                             html: true,
                             content: contextMarkup,
-                            template: '<div class="context popover caption_font" role="tooltip"><div class="arrow"></div><h3 class="popover-title"></h3><div class="popover-content"></div>' });
-
+                            template: '<div class="context popover caption_font" role="tooltip"><div class="arrow"></div><h3 class="popover-title"></h3><div class="popover-content"></div>' }).on('inserted.bs.popover', function() {
+                              $('#visualize-this-link').on('click', function() {
+                                contextButton.popover('hide');
+                                page.visualizeCurrentPage();
+                              });
+                            });
                     }
                 }
+            },
+
+            visualizeCurrentPage: function() {
+              var options = {
+                modal: true
+              }
+              let currentNode = scalarapi.model.getCurrentPageNode();
+              options.content = 'lens';
+              options.lens = {
+                "visualization": {
+                  "type": "force-directed",
+                  "options": {}
+                },
+                "components": [
+                  {
+                    "content-selector": {
+                      "type": "specific-items",
+                      "items": [ currentNode.slug ]
+                    },
+                    "modifiers": [
+                      {
+                        "type": "filter",
+                        "subtype": "relationship",
+                        "content-types": ["all-types"],
+                        "relationship": "any-relationship"
+                      }
+                    ]
+                  }
+                ],
+                "sorts": []
+              }
+              $( '.modalVisualization' ).data( 'scalarvis' ).showModal( options );
             },
 
             allowAnyClickToDismissPopovers: function() {
@@ -1631,6 +1669,20 @@
                 return mediaLinks;
             },
 
+            annotationHasMessage: function(annotation) {
+              let result = false;
+              if (annotation.body.current.properties['http://purl.org/dc/terms/abstract']) {
+                result = annotation.body.current.properties['http://purl.org/dc/terms/abstract'][0].value;
+              }
+              return result;
+            },
+
+            sendMessage: function(mediaelement, message) {
+          		if (message && mediaelement.view.mediaObjectView.hasFrameLoaded) {
+                mediaelement.sendMessage(message);
+          		}
+          	},
+
             // trigger media playback when links are clicked on
             handleMediaLinkClick: function(e) {
 
@@ -1646,8 +1698,8 @@
                         // the media if it isn't already playing
                         var annotationURL = $(this).data('targetAnnotation');
                         if (annotationURL != null) {
-
                             mediaelement.seek(mediaelement.model.initialSeekAnnotation);
+                            page.sendMessage(mediaelement, page.annotationHasMessage(mediaelement.model.initialSeekAnnotation));
                             if ((mediaelement.model.mediaSource.contentType != 'document') && (mediaelement.model.mediaSource.contentType != 'image')) {
                                 setTimeout(function() {
                                     if (!mediaelement.is_playing()) {
@@ -1720,7 +1772,7 @@
             addLensEditor: function() {
               if ($('.page-lens-editor').length == 0) {
                 var div = $('<div class="page-lens-editor"></div>');
-                page.bodyContent().prepend(div);
+                page.bodyContent().append(div);
                 div.wrap('<div class="paragraph_wrapper"><div class="body_copy"></div></div>');
                 $.when(
                   $.getScript(views_uri+'/melons/cantaloupe/js/bootbox.min.js'),
@@ -1733,30 +1785,29 @@
                   $.Deferred((deferred) => {
                     $(deferred.resolve);
                   })
-                ).done(() => { div.ScalarLenses({onLensResults: this.handleLensResults}) });
+                ).done(() => {
+                  var visualization = $('.visualization');
+                  if (visualization.length == 0) {
+                    visualization = $('<div id="lens-visualization" class="visualization"><div class="body_copy caption_font">Loading data...</div></div>').appendTo(page.bodyContent());
+                  } else {
+                    visualization.empty();
+                  }
+                  div.ScalarLenses({onLensResults: this.handleLensResults})
+                });
               }
             },
 
-            handleLensResults: function(lensObject) {
-              var visualization = $('.visualization');
-              if (visualization.length == 0) {
-                visualization = $('<div class="visualization"></div>').appendTo(page.bodyContent());
-              } else {
-                visualization.empty();
-              }
-              var slugs = [];
-              for (var url in lensObject.items) {
-                if (scalarapi.model.nodesByURL[url] != null) {
-                  slugs.push(scalarapi.model.nodesByURL[url].slug);
-                }
-              }
-              if (lensObject.visualization) {
+            handleLensResults: function(returnedLensData, currentLens) {
+              // always update the visualization type to current since it could be out of date
+              returnedLensData.visualization = currentLens.visualization;
+              if (returnedLensData.visualization) {
                 var visOptions = {
                     modal: false,
                     content: 'lens',
-                    lens: lensObject
+                    lens: returnedLensData
                 };
-                visualization.scalarvis(visOptions);
+                $('#lens-visualization').empty();
+                $('#lens-visualization').scalarvis(visOptions);
               }
             },
 
@@ -1808,9 +1859,6 @@
                     } else {
                         page.bodyContent().append('<div class="body_copy"><p class="text-danger">The annotation editor could not be loaded because this is not a media page.</p></div>');
                     }
-
-                } else if ('lens' == extension) {
-                  this.addLensEditor();
 
                 } else if ('edit' == extension) {
                     // Nothing needed here
@@ -2229,7 +2277,9 @@
             },
 
             handleDelayedResize: function() {
-                if ((page.initialMediaLoad === true) && !page.isFullScreen && (document.location.href.indexOf('.annotation_editor') == -1)) {
+              var fullscreenElement = document.fullscreenElement || document.mozFullScreenElement || document.webkitFullscreenElement;
+              page.isFullScreen = (fullscreenElement != null);
+              if ((page.initialMediaLoad === true) && !page.isFullScreen && (document.location.href.indexOf('.annotation_editor') == -1)) {
                     var reload = false;
                     page.orientation = window.orientation;
                     if ($('body').width() <= page.mobileWidth) {
@@ -3073,7 +3123,14 @@
                                               "type": "items-by-type",
                                               "content-type": "table-of-contents"
                                             },
-                                            "modifiers": []
+                                            "modifiers": [{
+                                                "type": "filter",
+                                                "subtype": "relationship",
+                                                "content-types": [
+                                                    "all-types"
+                                                ],
+                                                "relationship": "child"
+                                            }]
                                           }
                                         ]
                                       }
@@ -3308,7 +3365,7 @@
                                                     url: relNode.sourceFile,
                                                     thumbnail: thumbnail_url
                                                 };
-                                                var mediaType = TL.MediaType(entry.media);
+                                                var mediaType = TL.lookupMediaType(entry.media);
 
                                                 if(mediaType.type=='imageblank' && thumbnail_url != null){
                                                     entry.media.url = thumbnail_url;

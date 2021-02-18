@@ -7,44 +7,255 @@
     const pluginName = 'ScalarLensManager', defaults = {};
 
     function ScalarLensManager(element, options) {
-        this.element = element;
-        this.options = $.extend( {}, defaults, options);
         this._defaults = defaults;
         this._name = pluginName;
+        this.element = element;
+        this.options = $.extend( {}, defaults, options);
+        this.selectedLens = null;
 
         this.init();
     }
 
     ScalarLensManager.prototype.init = function () {
       this.bookId = $('link#book_id').attr('href');
+      this.myLenses = [];
+      this.maxLenses = 5;
       this.userLevel = 'unknown';
       if ($('link#user_level').length > 0) {
         this.userLevel = $('link#user_level').attr('href');
       }
+      this.loggedIn = $('link#logged_in').length > 0;
       this.userId = 'unknown';
-      if ($('link#logged_in').length > 0) {
-        this.userId = $('link#logged_in').attr('href');
+      if (this.loggedIn) {
+        let temp = $('link#logged_in').attr('href').split('/');
+        this.userId = parseInt(temp[temp.length - 1]);
+        var is_connected_to_book = ($('link#user_level').length) ? true : false;
+        if (!is_connected_to_book) {
+            this.addLensButton = $('<button class="btn btn-sm btn-primary">Add lens</button>').appendTo($('.my-private-lenses'));
+            this.addLensButton.on('click', () => { this.addLensByUserId() });
+      	} else if ((this.userLevel == 'scalar:Reader' && this.myLenses.length < this.maxLenses)) {
+          this.addLensButton = $('<button class="btn btn-sm btn-primary">Add lens</button>').appendTo($('.my-private-lenses'));
+          this.addLensButton.on('click', () => { this.addLensByUserId() });
+      	} else if (this.userLevel != 'scalar:Reader') {
+          this.addLensButton = $('<button class="btn btn-sm btn-primary">Add lens</button>').appendTo($('.my-private-lenses'));
+          this.addLensButton.on('click', () => { this.addLens() });
+        } else {
+          $('You have reached the maximum of ' + this.maxLenses + ' lenses. To create another, you must first delete one in the Dashboard.').appendTo($('.my-private-lenses'));
+        }
       }
+      $('heading').append('<p>Lenses are living snapshots of the content of this project, visualizing dynamic selections of pages and media. <a href="#">Learn more »</a></p>');
+      $('body').on('lensUpdated', (evt, lens) => { this.handleLensUpdated(evt, lens); });
+      $('.lens-edit-container>h4,.vis-container>h4').after('<div class="non-ideal-state-message caption_font">No lens selected.</div>');
+      this.addSubmittedMessage();
       this.getLensData();
     }
 
-    ScalarLensManager.prototype.selectLens = function(lens) {
-      $('.page-lens-editor').remove();
-      var div = $('<div class="page-lens-editor"></div>');
-      $('.lens-edit-container').append(div);
-      div.ScalarLenses({
-        lens: lens,
-        onLensResults: this.handleLensResults
+    ScalarLensManager.prototype.addLens = function() {
+
+			data = {
+				'action': 'ADD',
+				'native': '1',
+				'id': this.userId,
+				'api_key': '',
+				'dcterms:title': 'Lens: Untitled',
+				'dcterms:description': 'A snapshot of the content of this project.',
+				'sioc:content': '',
+				'rdf:type': 'http://scalar.usc.edu/2012/01/scalar-ns#Composite',
+        'scalar:child_urn': 'urn:scalar:book:' + this.bookId,
+        'scalar:child_type': 'http://scalar.usc.edu/2012/01/scalar-ns#Book',
+        'scalar:child_rel': 'grouped',
+        'scalar:contents': JSON.stringify(this.getDefaultLensJson())
+			};
+
+  		var error = function(error) {
+  			//me.hideSpinner();
+        console.log(error);
+  			alert('An error occurred while creating a new lens.');
+  		}
+
+  		//me.showSpinner();
+
+  		scalarapi.savePage(data, () => { this.getLensData() }, error);
+    }
+    
+    ScalarLensManager.prototype.addLensByUserId = function() {
+    	
+    	var self = this;
+    	var json = this.getDefaultLensJson();
+    	json.user_id = this.userId;
+    	
+    	var data = {		
+    	    action : 'add',
+    		'dcterms:title' : 'Lens: Untitled',
+    		'dcterms:description' : '',  
+    		'sioc:content' : '',
+    		contents : JSON.stringify(json),
+    		user : this.userId
+    	};
+    	
+    	$.ajax({
+    		type: "POST",
+    		url: $('link#parent').attr('href') + 'save_lens_page_by_user_id',
+    		data: data,
+    		success: function(json) {
+    			if ('undefined' != typeof(json['error'])) {
+    				alert('There was an error: ' + json['error']);
+    				return;
+    			};
+    			var url = $('link#parent').attr('href') + json['slug'];
+    			self.getLensData();
+    		},
+    		error: function(err) {
+    			alert('There was an error connecting to the server');
+    		},
+    		dataType: 'json'
+    	});
+    	
+    }
+    
+    ScalarLensManager.prototype.getDefaultLensJson = function(){
+      return {
+        "submitted": false,
+        "public": false,
+        "frozen": false,
+        "frozen-items": [],
+        "visualization": {
+          "type": null,
+          "options": {}
+        },
+        "components": [],
+        "sorts": [],
+        "title": "Untitled lens",
+        "slug": "untitled-lens",
+        "user_level": this.userLevel
+      };
+    }
+
+    ScalarLensManager.prototype.handleLensUpdated = function(evt, lens) {
+      this.getLensData();
+      if (!lens) {
+        this.selectLens(null);
+      }
+    }
+
+    ScalarLensManager.prototype.saveLens = function() {
+      this.baseURL = $('link#parent').attr('href');
+      var baseProperties =  {
+          'native': 1,
+          'id': this.userId,
+          'api_key':''
+      };
+      var pageData = {
+        action: 'UPDATE',
+        'scalar:urn': this.selectedLens.urn,
+        uriSegment: this.selectedLens.slug,
+        'dcterms:title': this.selectedLens.title
+      };
+      var relationData = {};
+      relationData[this.baseURL + this.selectedLens.slug + 'null'] = {
+        action: 'RELATE',
+        'scalar:urn': this.selectedLens.urn.replace('lens','version'),
+        'scalar:child_rel': 'grouped',
+        'scalar:contents': JSON.stringify(this.selectedLens)
+      };
+      scalarapi.modifyPageAndRelations(baseProperties, pageData, relationData, () => {
+        $('body').trigger('lensUpdated', this.selectedLens);
       });
     }
 
-    ScalarLensManager.prototype.handleLensResults = function(lens) {
-      var visualization = $('.visualization');
-      if (visualization.length == 0) {
-        visualization = $('<div class="visualization"></div>').appendTo($('.vis-container'));
-      } else {
+    ScalarLensManager.prototype.selectLens = function(lens) {
+      this.selectedLens = lens;
+      this.updateLensHighlight();
+      $('.page-lens-editor').remove();
+      $('.visualization').empty();
+      var div = $('<div class="page-lens-editor"></div>');
+      $('.lens-edit-container').append(div);
+      $('.lens-edit-container').append(this.submittedMessage);
+      this.updateSubmittedMessage(lens);
+      if (lens) {
+        div.ScalarLenses({
+          lens: lens,
+          onLensResults: this.handleLensResults
+        });
+        $('.lens-edit-container>.non-ideal-state-message,.vis-container>.non-ideal-state-message').hide();
+        var visualization = $('.visualization');
         visualization.empty();
+        visualization.append('<div class="caption_font">Loading data...</div>');
+      } else {
+        $('.lens-edit-container>.non-ideal-state-message,.vis-container>.non-ideal-state-message').show();
       }
+    }
+
+    ScalarLensManager.prototype.addSubmittedMessage = function() {
+      this.submittedMessage = $('<div id="submitted-message" class="bg-info">'+
+        '<div style="float:right; width:140px;">'+
+        '<button id="reject-lens-btn" class="btn btn-block btn-default">Reject submission</button>'+
+        '<button id="accept-lens-btn" class="btn btn-block btn-primary">Make lens public</button></div>'+
+        '<p><strong>Submitted by:</strong> Erik Loyer (<a href="#">erikcloyer@gmail.com</a>)</p>'+
+        '<p><strong>Comments:</strong> “Hi, I thought readers might find this lens valuable. Thanks for considering.”</p>'+
+        '</div>').appendTo($('.lens-edit-container'));
+      $('#reject-lens-btn').on('click', (evt) => { this.rejectLens(evt); });
+      $('#accept-lens-btn').on('click', (evt) => { this.acceptLens(evt); });
+    }
+
+    ScalarLensManager.prototype.updateSubmittedMessage = function(lens) {
+      if (!lens) {
+        this.submittedMessage.hide();
+      } else {
+        if (lens.submitted) {
+          this.submittedMessage.show();
+        } else {
+          this.submittedMessage.hide();
+        }
+      }
+    }
+
+    ScalarLensManager.prototype.rejectLens = function() {
+      this.selectedLens.submitted = false;
+      this.saveLens();
+    }
+
+    ScalarLensManager.prototype.acceptLens = function() {
+      this.selectedLens.submitted = false;
+      this.saveLens();
+
+      var duplicateJson = JSON.parse(JSON.stringify(this.selectedLens));
+      duplicateJson.user_level = this.userLevel;
+      duplicateJson.public = true;
+      delete duplicateJson.slug;
+      delete duplicateJson.urn;
+      delete duplicateJson.book_urn;
+			data = {
+				'action': 'ADD',
+				'native': '1',
+				'id': this.userId,
+				'api_key': '',
+				'dcterms:title': duplicateJson.title,
+				'dcterms:description': '',
+				'sioc:content': '',
+				'rdf:type': 'http://scalar.usc.edu/2012/01/scalar-ns#Composite',
+        'scalar:child_urn': 'urn:scalar:book:' + this.bookId,
+        'scalar:child_type': 'http://scalar.usc.edu/2012/01/scalar-ns#Book',
+        'scalar:child_rel': 'grouped',
+        'scalar:contents': JSON.stringify(duplicateJson)
+			};
+  		var error = function(error) {
+        console.log(error);
+  			alert('An error occurred while duplicating the lens.');
+  		}
+  		scalarapi.savePage(data, function(response) {
+        $('body').trigger('lensUpdated', duplicateJson);
+      }, error);
+    }
+
+    ScalarLensManager.prototype.updateLensHighlight = function() {
+      $('.lens-item').removeClass('highlight');
+      if (this.selectedLens) {
+        $('.lens-' + this.selectedLens.slug).addClass('highlight');
+      }
+    }
+
+    ScalarLensManager.prototype.handleLensResults = function(lens) {
       var slugs = [];
       for (var url in lens.items) {
         if (scalarapi.model.nodesByURL[url] != null) {
@@ -58,7 +269,8 @@
             content: 'lens',
             lens: lens
         };
-        visualization.scalarvis(visOptions);
+        $('.visualization').empty();
+        $('.visualization').scalarvis(visOptions);
       }
     }
 
@@ -84,208 +296,120 @@
     ScalarLensManager.prototype.handleLensData = function(response){
 
       let data = response;
-      //this.userLevel = 'scalar:Reader';
-      console.log(this.userLevel);
-      console.log(data);
+      this.myLenses = [];
+      let myPrivateLensArray = [];
+      let otherPrivateLensArray = [];
+      let submittedLensArray = [];
+      let publicLensArray = [];
 
+      if (!this.count) {
+        this.count = 0;
+      }
 
+      // build sidebar list
+      data.forEach((lens, index) => {
+        /*if (index == 0 && this.count == 0) {
+          lens.submitted = true; // temporary
+          this.count++;
+        }*/
+        if (lens.public) {
+          publicLensArray.push(lens);
+        } else {
+          if (lens.user_id == this.userId) {
+            myPrivateLensArray.push(lens);
+          } else {
+            otherPrivateLensArray.push(lens);
+          }
+          if (lens.submitted) {
+            submittedLensArray.push(lens);
+          }
+        }
+        if (lens.user_id == this.userId) {
+          this.myLenses.push(lens);
+        }
+      });
 
-      //_______________//
-      //
-      /// author view
-      //_______________//
+      $('.my-private-lenses-list,.other-private-lenses-list,.submitted-lenses-list,.public-lenses-list').empty();
 
-      if(this.userLevel == 'scalar:Author'){
-        let privateLensArray = [];
-        let submittedLensArray = [];
-        let publicLensArray = [];
+      this.loggedIn ? $('.my-private-lenses').show() : $('.my-private-lenses').hide();
+      otherPrivateLensArray.length > 0 && this.loggedIn ? $('.other-private-lenses').show() : $('.other-private-lenses').hide();
+      submittedLensArray.length > 0 ? $('.submitted-lenses').show() : $('.submitted-lenses').hide();
+      //publicLensArray.length > 0 ? $('.public-lenses').show() : $('.public-lenses').hide();
 
-        $('.private-lenses .title').text('My Private Lenses');
-        $(this.element).find('.submitted-lenses .title').text('Awaiting My Review');
-        $('.public-lenses .title').text('Public Lenses');
+      // my private lenses
+      if (myPrivateLensArray.length > 0) {
+        myPrivateLensArray.forEach(privateLensItem => {
+          let vizType = privateLensItem.visualization.type;
+          let lensLink = $('link#parent').attr('href') + privateLensItem.slug;
+          let markup = $(`
+            <li class="caption_font lens-item lens-${privateLensItem.slug}">
+              <a href="${lensLink}" target="_blank">${privateLensItem.title}</a>
+              <span class="viz-icon ${vizType}"></span>
+            </li>`
+          ).appendTo($('.my-private-lenses-list'));
+          markup.find('a').on('click', function(evt) { evt.stopPropagation(); }); // stop clicks on the link from selecting the lens
+          markup.data('lens', privateLensItem);
+        });
+      } else {
+        $('.my-private-lenses-list').append('<div class="non-ideal-state-message caption_font">You have no private lenses.</div>');
+      }
 
+      // other private lenses
+      otherPrivateLensArray.forEach(privateLensItem => {
+        let vizType = privateLensItem.visualization.type;
+        let lensLink = $('link#parent').attr('href') + privateLensItem.slug;
+        let markup = $(`
+          <li class="caption_font lens-item lens-${privateLensItem.slug}">
+            <a href="${lensLink}" target="_blank">${privateLensItem.title}</a>
+            <span class="viz-icon ${vizType}"></span>
+          </li>`
+        ).appendTo($('.other-private-lenses-list'));
+        markup.find('a').on('click', function(evt) { evt.stopPropagation(); }); // stop clicks on the link from selecting the lens
+        markup.data('lens', privateLensItem);
+      });
+
+      // submitted lenses
+      submittedLensArray.forEach(submittedLensItem => {
+        let vizType = submittedLensItem.visualization.type;
+        let lensLink = $('link#parent').attr('href') + submittedLensItem.slug;
+        let markup = $(`
+          <li class="caption_font lens-item lens-${submittedLensItem.slug}">
+            <a href="${lensLink}" target="_blank">${submittedLensItem.title}</a>
+            <span class="viz-icon ${vizType}"></span>
+          </li>`
+        ).appendTo($('.submitted-lenses-list'));
+        markup.find('a').on('click', function(evt) { evt.stopPropagation(); }); // stop clicks on the link from selecting the lens
+        markup.data('lens', submittedLensItem);
+      });
+
+      // public lenses
+      if (publicLensArray.length > 0) {
+        publicLensArray.forEach(publicLensItem => {
+          let vizType = publicLensItem.visualization.type;
+          let lensLink = $('link#parent').attr('href') + publicLensItem.slug;
+          let markup = $(`
+            <li class="caption_font lens-item lens-${publicLensItem.slug}">
+              <a href="${lensLink}" target="_blank">${publicLensItem.title}</a>
+              <span class="viz-icon ${vizType}"></span>
+            </li>`
+          ).appendTo($('.public-lenses-list'));
+          markup.find('a').on('click', function(evt) { evt.stopPropagation(); }); // stop clicks on the link from selecting the lens
+          markup.data('lens', publicLensItem);
+        });
+      } else {
+        $('.public-lenses-list').append('<div class="non-ideal-state-message caption_font">No public lenses available.</div>');
+      }
+
+      if (this.selectedLens == null) {
         if (data.length > 0) {
           this.selectLens(data[0]);
-        }
-
-        // build sidebar list
-        data.forEach(lens => {
-          // sort lenses
-          if(lens.user_level == 'scalar:Author'){
-            lens.public ? publicLensArray.push(lens) : privateLensArray.push(lens);
-            if(lens.submitted == true){
-              submittedLensArray.push(lens);
-            }
-          }
-        });
-        // private lenses
-        privateLensArray.forEach(privateLensItem => {
-          let vizType = privateLensItem.visualization.type;
-          let lensLink = $('link#parent').attr('href') + privateLensItem.slug;
-          // display author private lenses
-          if(privateLensArray.length == 0){
-            $('.private-lenses').hide()
-          } else {
-            $('.private-lenses').show()
-          }
-          let markup = $(`
-            <li class="caption_font">
-              <a href="${lensLink}" target="_blank">${privateLensItem.title}</a>
-              <span id="private-lens-count" class="badge dark caption_font">0</span>
-              <span class="viz-icon ${vizType}"></span>
-            </li>`
-          ).appendTo($('.private-lenses-list'));
-          markup.data('lens', privateLensItem);
-        });
-
-        // submitted lenses
-        if(submittedLensArray.length == 0){
-          $('.submitted-lenses').hide()
         } else {
-          $('.submitted-lenses').show()
+          this.selectLens(null);
         }
-        submittedLensArray.forEach(submittedLensItem => {
-          let vizType = submittedLensItem.visualization.type;
-          let lensLink = $('link#parent').attr('href') + submittedLensItem.slug;
-          let markup = $(`
-            <li class="caption_font">
-              <a href="${lensLink}" target="_blank">${submittedLensItem.title}</a>
-              <span id="submitted-lens-count" class="badge dark caption_font">0</span>
-              <span class="viz-icon ${vizType}"></span>
-            </li>`
-          ).appendTo($('.submitted-lenses-list'));
-          markup.data('lens', submittedLensItem);
-        });
-
-        // public lenses
-        if(publicLensArray.length == 0){
-          $('.public-lenses').hide()
-        } else {
-          $('.public-lenses').show()
-        }
-        publicLensArray.forEach(publicLensItem => {
-          let vizType = publicLensItem.visualization.type;
-          let lensLink = $('link#parent').attr('href') + publicLensItem.slug;
-          let markup = $(`
-            <li class="caption_font">
-              <a href="${lensLink}" target="_blank">${publicLensItem.title}</a>
-              <span id="public-lens-count" class="badge dark caption_font">0</span>
-              <span class="viz-icon ${vizType}"></span>
-            </li>`
-          ).appendTo($('.public-lenses-list'));
-          markup.data('lens', publicLensItem);
-        });
-
-
+      } else {
+        this.updateLensHighlight();
+        this.updateSubmittedMessage(this.selectedLens);
       }
-      //_______________//
-      /// Reader view
-
-      else if(this.userLevel == 'scalar:Reader'){
-        let privateLensArray = [];
-        let submittedLensArray = [];
-        let publicLensArray = [];
-
-        $('.private-lenses .title').text('My Private Lenses');
-        $(this.element).find('.submitted-lenses .title').text('My Submitted Lenses');
-        $('.public-lenses .title').text('Public Lenses');
-
-        // build sidebar list
-        data.forEach(lens => {
-          // sort lenses
-          if(lens.user_level == 'scalar:Reader'){
-            lens.public ? publicLensArray.push(lens) : privateLensArray.push(lens);
-            if(lens.submitted == true){
-              submittedLensArray.push(lens);
-            }
-          }
-        });
-        // private lenses
-        privateLensArray.forEach(privateLensItem => {
-          let vizType = privateLensItem.visualization.type;
-          let lensLink = $('link#parent').attr('href') + privateLensItem.slug;
-          // display author private lenses
-          if(privateLensArray.length == 0){
-            $('.private-lenses').hide()
-          } else {
-            $('.private-lenses').show()
-          }
-          let markup = $(`
-            <li class="caption_font">
-              <a href="${lensLink}" target="_blank">${privateLensItem.title}</a>
-              <span id="private-lens-count" class="badge dark caption_font">0</span>
-              <span class="viz-icon ${vizType}"></span>
-            </li>`
-          ).appendTo($('.private-lenses-list'));
-          markup.data('lens', privateLensItem);
-        });
-        // submitted lenses
-        if(submittedLensArray.length == 0){
-          $('.submitted-lenses').hide()
-        } else {
-          $('.submitted-lenses').show()
-        }
-        submittedLensArray.forEach(submittedLensItem => {
-          let vizType = submittedLensItem.visualization.type;
-          let lensLink = $('link#parent').attr('href') + submittedLensItem.slug;
-          let markup = $(`
-            <li class="caption_font">
-              <a href="${lensLink}" target="_blank">${submittedLensItem.title}</a>
-              <span id="submitted-lens-count" class="badge dark caption_font">0</span>
-              <span class="viz-icon ${vizType}"></span>
-            </li>`
-          ).appendTo($('.submitted-lenses-list'));
-          markup.data('lens', submittedLensItem);
-        });
-        // public lenses
-        if(publicLensArray.length == 0){
-          $('.public-lenses').hide()
-        } else {
-          $('.public-lenses').show()
-        }
-        publicLensArray.forEach(publicLensItem => {
-          let vizType = publicLensItem.visualization.type;
-          let lensLink = $('link#parent').attr('href') + publicLensItem.slug;
-          let markup = $(`
-            <li class="caption_font">
-              <a href="${lensLink}" target="_blank">${publicLensItem.title}</a>
-              <span id="public-lens-count" class="badge dark caption_font">0</span>
-              <span class="viz-icon ${vizType}"></span>
-            </li>`
-          ).appendTo($('.public-lenses-list'));
-          markup.data('lens', publicLensItem);
-        });
-      }
-
-      // non-authors and non-readers
-      else {
-        let publicLensArray = [];
-        $('.public-lenses .title').text('Public Lenses');
-        // build sidebar list
-        data.forEach(lens => {
-          if(lens.public == true){
-            publicLensArray.push(lens);
-          }
-        });
-        // public lenses
-        if(publicLensArray.length == 0){
-          $('.public-lenses').hide()
-        } else {
-          $('.public-lenses').show()
-        }
-        publicLensArray.forEach(publicLensItem => {
-          let vizType = publicLensItem.visualization.type;
-          let lensLink = $('link#parent').attr('href') + publicLensItem.slug;
-          let markup = $(`
-            <li class="caption_font">
-              <a href="${lensLink}" target="_blank">${publicLensItem.title}</a>
-              <span id="public-lens-count" class="badge dark caption_font">0</span>
-              <span class="viz-icon ${vizType}"></span>
-            </li>`
-          ).appendTo($('.public-lenses-list'));
-          markup.data('lens', publicLensItem);
-        });
-      };
 
       var me = this;
       // display lens when clicked
